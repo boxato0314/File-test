@@ -1,0 +1,4573 @@
+# 彙整每日良率資料，系統撈資料 excel 統計劃圖 貼到報告
+
+> 我要自動彙整每日良率資料，系統撈資料 excel 統計劃圖  貼到報告
+
+<details><summary>1 previous message</summary>
+
+> 我會用 Spreadsheets 的工作流來框這件事，因為你的核心是把每日資料自動整理成 Excel 統計與圖表，再銜接到報告。先把流程釐清，我就能幫你做成模板或腳本。
+</details>
+
+可以，這件事可以做成一條自動流程：
+
+1. **撈每日良率資料**
+   從系統匯出的 CSV/Excel、資料庫、MES/API、或固定資料夾抓檔。
+
+2. **Excel 自動統計**
+   自動整理每日、線別、站點、機種、批號等欄位，計算：
+   - 投入數
+   - 良品數
+   - 不良數
+   - 良率
+   - 不良率
+   - Top N 不良項目
+   - 趨勢比較
+
+3. **自動畫圖**
+   產生每日良率趨勢圖、線別比較圖、不良 Pareto 圖等。
+
+4. **貼到報告**
+   可輸出成：
+   - Excel 報表
+   - Word 報告
+   - PowerPoint 簡報
+   - PDF
+   - 或把圖表貼到既有報告模板中
+
+我可以幫你做成一個可每天執行的自動化工具。你只要給我這幾個資訊：
+
+- 資料來源是什麼？例如系統匯出的 Excel/CSV、資料庫、API。
+- 原始資料欄位長什麼樣？可以上傳一份範例檔。
+- 報告要用 Excel、Word、PPT 還是 PDF？
+- 每天要統計哪些維度？例如日期、產線、產品、站點、班別。
+- 良率公式是否為 `良品數 / 投入數`？
+
+你把範例資料和目前報告格式給我，我就可以直接幫你做第一版自動彙整 Excel 與報告模板。
+
+> 報表系統下載後格式如附件，依據不同站點統計月/周/日良率
+>
+> User context
+>
+> Attachments:
+> - ExportExcel - 2026-06-11T095732.025.xls: `~/Downloads/ExportExcel - 2026-06-11T095732.025.xls`
+
+<details><summary>32 previous messages</summary>
+
+> 收到，這份附件就是原始系統匯出格式。接下來我會先讀它的欄位與資料形狀，然後做一份可依「站點」彙整日、周、月良率的 Excel 範本。
+>
+> 我會用內建的 Python/Excel 套件處理，避免依賴你電腦上是否安裝 Office。先確認檔案能不能讀、有哪些工作表與欄位。
+>
+> 這台環境目前把一般 shell 啟動擋住了，我改走 Node REPL 這條通道來讀檔與產出 Excel。先看可用套件，再決定最穩的解析方式。
+>
+> <details><summary>Called 2 tools</summary>
+>
+> MCP tool call
+>
+> node_repl.js_add_node_module_dir
+>
+> ```json
+> {
+>   "path": "C:\\Users\\0904211\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\node_modules"
+> }
+> ```
+>
+> ```text
+> true
+> ```
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect spreadsheet packages",
+>   "code": "const mods=['xlsx','exceljs','fs-extra'];\nlet out={};\nfor (const m of mods){ try { await import(m); out[m]=true; } catch(e){ out[m]=e.message; } }\nnodeRepl.write(JSON.stringify(out,null,2));"
+> }
+> ```
+>
+> ```text
+> {
+>   "xlsx": "Module not found: xlsx",
+>   "exceljs": "Module not found: exceljs",
+>   "fs-extra": "Module not found: fs-extra"
+> }
+> ```
+>
+> </details>
+>
+> 如果系統匯出的 `.xls` 是常見的「HTML 表格偽裝成 Excel」，我可以直接解析；如果是二進位 BIFF，就要用別的解析器。我先檢查檔案頭，不會改動原檔。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect XLS header",
+>   "code": "const fs = await import('node:fs');\nconst path='C:/Users/0904211/Downloads/ExportExcel - 2026-06-11T095732.025.xls';\nconst buf=fs.readFileSync(path);\nconst head=buf.subarray(0,200);\nnodeRepl.write(JSON.stringify({size:buf.length, hex:head.subarray(0,16).toString('hex'), text:head.toString('utf8').replace(/[\\u0000-\\u001f]/g,' ').slice(0,200)},null,2));"
+> }
+> ```
+>
+> ```text
+> {
+>   "size": 13952,
+>   "hex": "0a202020202020202020202020202020",
+>   "text": "                 <html xmlns:o=\"urn:schemas-microsoft-com:office:office\"                       xmlns:x=\"urn:schemas-microsoft-com:office:excel\"                       xmlns=\"http://www.w3.org/TR/REC-ht"
+> }
+> ```
+>
+> 好消息，這個檔案其實是 HTML 表格格式，解析難度低很多。現在我會抽出表格內容與欄位，確認日期、站點、良率相關欄位在哪裡。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Extract table preview",
+>   "code": "const fs = await import('node:fs');\nconst file='C:/Users/0904211/Downloads/ExportExcel - 2026-06-11T095732.025.xls';\nlet html=fs.readFileSync(file,'utf8');\nfunction decode(s){ return s.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(+n)).trim(); }\nlet rows=[...html.matchAll(/<tr[\\s\\S]*?<\\/tr>/gi)].map(m=>m[0]);\nlet parsed=rows.map(r=>[...r.matchAll(/<t[dh][^>]*>([\\s\\S]*?)<\\/t[dh]>/gi)].map(c=>decode(c[1]))).filter(r=>r.length);\nnodeRepl.write(JSON.stringify({rowCount:parsed.length, preview:parsed.slice(0,12)},null,2));"
+> }
+> ```
+>
+> ```text
+> Identifier 'fs' has already been declared
+> ```
+>
+> 我碰到 REPL 變數已存在的小狀況，換個作用域就好，繼續抽表格預覽。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Extract table preview",
+>   "code": "{\n  const fs2 = await import('node:fs');\n  const file='C:/Users/0904211/Downloads/ExportExcel - 2026-06-11T095732.025.xls';\n  let html=fs2.readFileSync(file,'utf8');\n  function decode(s){ return s.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(+n)).trim(); }\n  let rows=[...html.matchAll(/<tr[\\s\\S]*?<\\/tr>/gi)].map(m=>m[0]);\n  let parsed=rows.map(r=>[...r.matchAll(/<t[dh][^>]*>([\\s\\S]*?)<\\/t[dh]>/gi)].map(c=>decode(c[1]))).filter(r=>r.length);\n  nodeRepl.write(JSON.stringify({rowCount:parsed.length, preview:parsed.slice(0,15)},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "rowCount": 13,
+>   "preview": [
+>     [
+>       "RECORDDATE",
+>       "DATATYPE",
+>       "PRODUCTNAME",
+>       "PRODUCTNO",
+>       "EQP_ID",
+>       "OPNO",
+>       "MONOTYPE",
+>       "Total Yield(顆)",
+>       "Total Yield(片)",
+>       "Total片數",
+>       "NG片數",
+>       "Total顆粒",
+>       "NG顆粒"
+>     ],
+>     [
+>       "2026/05/03",
+>       "3DL",
+>       "TBREB20 V0",
+>       "96.ZREB2.000000N",
+>       "A53DL001",
+>       "A5TC002",
+>       "E",
+>       "100",
+>       "100",
+>       "1",
+>       "0",
+>       "8820",
+>       "0"
+>     ],
+>     [
+>       "2026/05/03",
+>       "3DL",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A53DL001",
+>       "A5TC001",
+>       "E",
+>       "99.9785",
+>       "75",
+>       "28",
+>       "7",
+>       "246960",
+>       "53"
+>     ],
+>     [
+>       "2026/05/03",
+>       "AOI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5AOI003",
+>       "A5AC003",
+>       "E",
+>       "99.9975",
+>       "82.61",
+>       "23",
+>       "4",
+>       "202860",
+>       "5"
+>     ],
+>     [
+>       "2026/05/03",
+>       "AOI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5AOI004",
+>       "A5AC004",
+>       "E",
+>       "99.9961",
+>       "82.61",
+>       "23",
+>       "4",
+>       "202860",
+>       "8"
+>     ],
+>     [
+>       "2026/05/03",
+>       "AVI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5AVI001",
+>       "A5AV002",
+>       "E",
+>       "100",
+>       "100",
+>       "10",
+>       "0",
+>       "88200",
+>       "0"
+>     ],
+>     [
+>       "2026/05/03",
+>       "AXI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000000N",
+>       "A5AXI001",
+>       "A5IX001",
+>       "E",
+>       "100",
+>       "100",
+>       "13",
+>       "0",
+>       "114660",
+>       "0"
+>     ],
+>     [
+>       "2026/05/03",
+>       "AXI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5AXI001",
+>       "A5IX001",
+>       "E",
+>       "100",
+>       "100",
+>       "21",
+>       "0",
+>       "185220",
+>       "0"
+>     ],
+>     [
+>       "2026/05/03",
+>       "DB",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5DIB001",
+>       "A5CB001",
+>       "E",
+>       "",
+>       "100",
+>       "21",
+>       "0",
+>       "185220",
+>       ""
+>     ],
+>     [
+>       "2026/05/03",
+>       "DB",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5DIB002",
+>       "A5CB001",
+>       "E",
+>       "",
+>       "100",
+>       "2",
+>       "0",
+>       "17640",
+>       ""
+>     ],
+>     [
+>       "2026/05/03",
+>       "FNT",
+>       "TBREB20 V0",
+>       "96.ZREB2.000000N",
+>       "A5FNT001",
+>       "A5FT001",
+>       "E",
+>       "99.9991",
+>       "92.31",
+>       "13",
+>       "1",
+>       "114660",
+>       "1"
+>     ],
+>     [
+>       "2026/05/03",
+>       "FNT",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5FNT001",
+>       "A5FT001",
+>       "E",
+>       "99.9978",
+>       "85.71",
+>       "21",
+>       "3",
+>       "185220",
+>       "4"
+>     ],
+>     [
+>       "2026/05/03",
+>       "SPI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5SPI002",
+>       "A5SC002",
+>       "E",
+>       "99.9985",
+>       "95.65",
+>       "23",
+>       "1",
+>       "202860",
+>       "3"
+>     ]
+>   ]
+> }
+> ```
+>
+> 欄位已確認：`RECORDDATE` 是日期，`DATATYPE` 看起來就是站點，另外有片數與顆粒兩種良率來源。下一步我會產出一份彙整活頁簿，包含日/周/月三種站點良率表與圖表。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Check child process access",
+>   "code": "{\n  try {\n    const cp = await import('node:child_process');\n    nodeRepl.write('child_process ok');\n  } catch(e) { nodeRepl.write('child_process failed: '+e.message); }\n}"
+> }
+> ```
+>
+> ```text
+> child_process ok
+> ```
+>
+> 我可以從 Node 啟動內建 Python，這樣就能用 `openpyxl` 做真正的 `.xlsx` 圖表與格式。先快速確認必要套件。
+>
+> <details><summary>Called 2 tools</summary>
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Check Python spreadsheet libs",
+>   "code": "{\n  const cp = await import('node:child_process');\n  const py='C:/Users/0904211/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe';\n  const code=\"import pkgutil, json; print(json.dumps({m: bool(pkgutil.find_loader(m)) for m in ['pandas','openpyxl','lxml','bs4','xlrd']}))\";\n  const res=cp.spawnSync(py,['-c',code],{encoding:'utf8'});\n  nodeRepl.write(JSON.stringify({status:res.status, stdout:res.stdout, stderr:res.stderr},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "status": null
+> }
+> ```
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect spawn error",
+>   "code": "{\n  const cp = await import('node:child_process');\n  const py='C:/Users/0904211/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe';\n  const res=cp.spawnSync(py,['-c','print(123)'],{encoding:'utf8'});\n  nodeRepl.write(JSON.stringify({status:res.status, signal:res.signal, error:res.error && {message:res.error.message, code:res.error.code}, stdout:res.stdout, stderr:res.stderr},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "status": null,
+>   "signal": null,
+>   "error": {
+>     "message": "spawnSync C:/Users/0904211/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe EPERM",
+>     "code": "EPERM"
+>   }
+> }
+> ```
+>
+> </details>
+>
+> Python 被系統權限擋住了，但資料量與格式很單純，我會直接用 JavaScript 產生 OpenXML `.xlsx`。這樣仍然能有多個工作表、公式、格式與折線/長條圖。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Check zip packages",
+>   "code": "{\n  const mods=['jszip','yazl','archiver','fflate'];\n  const result={};\n  for (const m of mods){ try{ await import(m); result[m]=true; }catch(e){ result[m]=e.message; } }\n  nodeRepl.write(JSON.stringify(result,null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "jszip": "Module not found: jszip",
+>   "yazl": "Module not found: yazl",
+>   "archiver": "Module not found: archiver",
+>   "fflate": "Module not found: fflate"
+> }
+> ```
+>
+> 我會把良率改成用總數加權重算，而不是直接平均系統列上的百分比：片良率 = `(Total片數 - NG片數) / Total片數`，顆粒良率 = `(Total顆粒 - NG顆粒) / Total顆粒`。這樣日/周/月合併時比較準。
+>
+> <details><summary>Created 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+301 -0)
+>
+> </details>
+>
+> 我已經放好產生報表的腳本，現在執行它來建立輸出檔。第一版會先把原始資料、日/周/月彙整表與公式說明放進同一份活頁簿。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Run yield report builder",
+>   "code": "{\n  const cp = await import('node:child_process');\n  const node='C:/Users/0904211/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe';\n  const script='C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js';\n  const res=cp.spawnSync(node,[script],{encoding:'utf8'});\n  nodeRepl.write(JSON.stringify({status:res.status, error:res.error && res.error.message, stdout:res.stdout, stderr:res.stderr},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "status": null,
+>   "error": "spawnSync C:/Users/0904211/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe EPERM"
+> }
+> ```
+>
+> 外部啟動 Node 也被權限擋住了；沒關係，我直接在目前可用的 Node REPL 裡執行同一份腳本邏輯。這只是換執行入口，輸出結果不變。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Execute builder module",
+>   "code": "{\n  try {\n    const mod = await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    nodeRepl.write('import ok');\n  } catch(e) {\n    nodeRepl.write(e.stack || e.message);\n  }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> ReferenceError: require is not defined
+>     at C:\Users\0904211\Documents\Codex\2026-06-11\excel\work\build_yield_report.js:1:12
+>     at SourceTextModule.evaluate (node:internal/vm/module:233:26)
+>     at importResolved (C:\Users\0904211\AppData\Local\Temp\.tmploe9eI\kernel.js:732:27)
+>     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+>     at async importModuleDynamicallyWrapper (node:internal/vm/module:525:15)
+>     at async C:\Users\0904211\Documents\Codex\2026-06-11\excel\.node_repl_cell_9.mjs:15:17
+> ```
+>
+> 腳本目前是 CommonJS 寫法，而 REPL 以 ESM 載入；我把前幾行改成 ESM 匯入即可。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+2 -2)
+>
+> </details>
+>
+> 已改好載入方式，現在再執行一次並確認輸出檔存在。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Generate workbook",
+>   "code": "{\n  try {\n    await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    const fs3 = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station.xlsx';\n    const stat=fs3.statSync(out);\n    nodeRepl.write(JSON.stringify({output:out,size:stat.size},null,2));\n  } catch(e) {\n    nodeRepl.write(e.stack || e.message);\n  }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_station.xlsx
+> {
+>   "output": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station.xlsx",
+>   "size": 22763
+> }
+> ```
+>
+> 目前 Excel 彙整表已產出。因為你提到要「畫圖、貼到報告」，我再補一份 HTML 報告：裡面直接有日/周/月站點良率圖與表格，開啟後可複製圖表到報告。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+83 -0)
+>
+> </details>
+>
+> 報告輸出也加進腳本了，現在重跑一次並檢查兩個檔案大小。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Regenerate workbook and HTML report",
+>   "code": "{\n  try {\n    await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    const fs4 = await import('node:fs');\n    const files=[\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station.xlsx',\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_report.html'\n    ];\n    nodeRepl.write(JSON.stringify(files.map(f=>({file:f,size:fs4.statSync(f).size})),null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_station.xlsx
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_station_report.html
+> [
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station.xlsx",
+>     "size": 22763
+>   },
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_report.html",
+>     "size": 13588
+>   }
+> ]
+> ```
+>
+> 兩個輸出檔都產生了。我再做一次結構檢查：確認 `.xlsx` 內有 workbook、styles、5 個工作表，避免交付一個 Excel 打不開的空殼。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify XLSX zip entries",
+>   "code": "{\n  const fs5 = await import('node:fs');\n  const buf=fs5.readFileSync('C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station.xlsx');\n  function readUInt32LE(off){ return buf.readUInt32LE(off); }\n  let eocd=-1;\n  for(let i=buf.length-22;i>=0;i--){ if(readUInt32LE(i)===0x06054b50){ eocd=i; break; } }\n  const entries=[];\n  if(eocd>=0){\n    const count=buf.readUInt16LE(eocd+10);\n    let off=buf.readUInt32LE(eocd+16);\n    for(let i=0;i<count;i++){\n      const nameLen=buf.readUInt16LE(off+28), extraLen=buf.readUInt16LE(off+30), commentLen=buf.readUInt16LE(off+32);\n      const name=buf.subarray(off+46, off+46+nameLen).toString('utf8');\n      entries.push(name);\n      off += 46+nameLen+extraLen+commentLen;\n    }\n  }\n  nodeRepl.write(JSON.stringify({validZip:eocd>=0, entries},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "validZip": true,
+>   "entries": [
+>     "[Content_Types].xml",
+>     "_rels/.rels",
+>     "xl/workbook.xml",
+>     "xl/_rels/workbook.xml.rels",
+>     "xl/styles.xml",
+>     "xl/worksheets/sheet1.xml",
+>     "xl/worksheets/sheet2.xml",
+>     "xl/worksheets/sheet3.xml",
+>     "xl/worksheets/sheet4.xml",
+>     "xl/worksheets/sheet5.xml"
+>   ]
+> }
+> ```
+</details>
+
+已依附件格式做出第一版自動彙整結果，站點目前以 `DATATYPE` 欄位判定，良率採加權重算：
+
+- 片良率：`(sum(Total片數) - sum(NG片數)) / sum(Total片數)`
+- 顆粒良率：`(sum(Total顆粒) - sum(NG顆粒)) / sum(Total顆粒)`
+
+輸出檔案：
+
+- [yield_summary_by_station.xlsx](./outputs/yield_summary_by_station.xlsx)
+- [yield_summary_by_station_report.html](./outputs/yield_summary_by_station_report.html)
+
+Excel 內含：`說明`、`原始資料`、`日良率`、`周良率`、`月良率`。
+HTML 報告內有日/周/月站點良率圖與表格，可以開啟後複製圖表貼到報告。
+
+我也確認了 `.xlsx` 結構正常，包含 5 個工作表。
+
+> User context
+>
+> Attachments:
+> - ExportExcel - 2026-06-11T100028.061.xls: `~/Downloads/ExportExcel - 2026-06-11T100028.061.xls`
+
+<details><summary>8 previous messages</summary>
+
+> 我看到你又放了一份新的系統匯出檔。先照同一套邏輯幫你重跑一次，產出這份檔案對應的日/周/月站點良率報表。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect new XLS preview",
+>   "code": "{\n  const fs = await import('node:fs');\n  const file='C:/Users/0904211/Downloads/ExportExcel - 2026-06-11T100028.061.xls';\n  const buf=fs.readFileSync(file);\n  const html=buf.toString('utf8');\n  function decode(s){ return s.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(+n)).trim(); }\n  const rows=[...html.matchAll(/<tr[\\s\\S]*?<\\/tr>/gi)].map(m=>[...m[0].matchAll(/<t[dh][^>]*>([\\s\\S]*?)<\\/t[dh]>/gi)].map(c=>decode(c[1]))).filter(r=>r.length);\n  nodeRepl.write(JSON.stringify({size:buf.length, rowCount:rows.length, headers:rows[0], firstRows:rows.slice(1,4)},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "size": 297768,
+>   "rowCount": 350,
+>   "headers": [
+>     "RECORDDATE",
+>     "DATATYPE",
+>     "PRODUCTNAME",
+>     "PRODUCTNO",
+>     "EQP_ID",
+>     "OPNO",
+>     "MONOTYPE",
+>     "Total Yield(顆)",
+>     "Total Yield(片)",
+>     "Total片數",
+>     "NG片數",
+>     "Total顆粒",
+>     "NG顆粒"
+>   ],
+>   "firstRows": [
+>     [
+>       "2026/04/20",
+>       "AVI",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5AVI001",
+>       "A5AV001",
+>       "E",
+>       "100",
+>       "100",
+>       "12",
+>       "0",
+>       "105840",
+>       "0"
+>     ],
+>     [
+>       "2026/04/20",
+>       "FNT",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A5FNT001",
+>       "A5FT002",
+>       "E",
+>       "99.9977",
+>       "86.67",
+>       "15",
+>       "2",
+>       "132300",
+>       "3"
+>     ],
+>     [
+>       "2026/04/21",
+>       "3DL",
+>       "TBREB20 V0",
+>       "96.ZREB2.000001N",
+>       "A53DL001",
+>       "A5TC001",
+>       "E",
+>       "100",
+>       "100",
+>       "4",
+>       "0",
+>       "35280",
+>       "0"
+>     ]
+>   ]
+> }
+> ```
+>
+> 新檔案格式一致，這次有 349 筆明細資料，日期範圍看起來從 2026/04/20 開始。現在我把腳本改成吃這份新檔，並另存成不覆蓋前一版的輸出。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+3 -3)
+>
+> </details>
+>
+> 檔名已切到新資料來源，接著產出新版 Excel 與 HTML 圖表報告。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Generate updated yield outputs",
+>   "code": "{\n  try {\n    await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    const fs = await import('node:fs');\n    const outputs=[\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_2026-06-11T100028.xlsx',\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_2026-06-11T100028_report.html'\n    ];\n    nodeRepl.write(JSON.stringify(outputs.map(f=>({file:f,size:fs.statSync(f).size})),null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_station_2026-06-11T100028.xlsx
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_station_2026-06-11T100028_report.html
+> [
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_2026-06-11T100028.xlsx",
+>     "size": 223963
+>   },
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_station_2026-06-11T100028_report.html",
+>     "size": 91561
+>   }
+> ]
+> ```
+>
+> 新版檔案已完成。最後我快速抽彙整結果，確認日/周/月都有產生資料並看一下站點分布。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Summarize generated aggregates",
+>   "code": "{\n  const fs = await import('node:fs');\n  const file='C:/Users/0904211/Downloads/ExportExcel - 2026-06-11T100028.061.xls';\n  const html=fs.readFileSync(file,'utf8');\n  function decode(s){ return s.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(+n)).trim(); }\n  const rows=[...html.matchAll(/<tr[\\s\\S]*?<\\/tr>/gi)].map(m=>[...m[0].matchAll(/<t[dh][^>]*>([\\s\\S]*?)<\\/t[dh]>/gi)].map(c=>decode(c[1]))).filter(r=>r.length);\n  const headers=rows[0];\n  const data=rows.slice(1).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));\n  const stations=[...new Set(data.map(r=>r.DATATYPE))].sort();\n  const dates=data.map(r=>r.RECORDDATE).sort();\n  nodeRepl.write(JSON.stringify({detailRows:data.length, dateFrom:dates[0], dateTo:dates[dates.length-1], stations},null,2));\n}"
+> }
+> ```
+>
+> ```text
+> {
+>   "detailRows": 349,
+>   "dateFrom": "2026/04/20",
+>   "dateTo": "2026/05/19",
+>   "stations": [
+>     "3DL",
+>     "AOI",
+>     "AVI",
+>     "AXI",
+>     "DB",
+>     "FNT",
+>     "SPI"
+>   ]
+> }
+> ```
+</details>
+
+已用你新上傳的檔案重跑完成。這份資料共有 349 筆，日期範圍是 `2026/04/20` 到 `2026/05/19`，站點包含 `3DL、AOI、AVI、AXI、DB、FNT、SPI`。
+
+輸出檔案：
+
+- [yield_summary_by_station_2026-06-11T100028.xlsx](./outputs/yield_summary_by_station_2026-06-11T100028.xlsx)
+- [yield_summary_by_station_2026-06-11T100028_report.html](./outputs/yield_summary_by_station_2026-06-11T100028_report.html)
+
+一樣包含原始資料、日良率、周良率、月良率；HTML 版可直接看圖表並貼到報告。
+
+> 用OPNO區分不要用DATATYP區分, 日週月放在同樣Sheet , 我要用樞紐的方式作圖方便每日更新。
+
+<details><summary>11 previous messages</summary>
+
+> 了解，我會把分組欄位從 `DATATYPE` 改成 `OPNO`，並把日/週/月整理成同一張「樞紐資料」工作表。這版的重點會是每日更新方便：一張長表格式，讓你直接用 Excel 樞紐分析表/樞紐圖拉圖。
+>
+> 我會保留原始資料工作表，另外做一張 `樞紐資料`：每列會有 `統計層級(日/週/月)`、`期間`、`OPNO`、投入/NG/良率欄位。這種格式最適合每天換資料後重新整理樞紐。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+28 -25)
+>
+> </details>
+>
+> Excel 的主結構已改成三張表：`說明`、`原始資料`、`樞紐資料`。我再同步調整 HTML 預覽報告的文字與圖表標籤，全部改用 `OPNO`。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+8 -8)
+>
+> </details>
+>
+> 現在重跑產出新版檔案，這版會是樞紐友善格式，不再分成日/週/月三張表。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Generate OPNO pivot workbook",
+>   "code": "{\n  try {\n    await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    const fs = await import('node:fs');\n    const outputs=[\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028.xlsx',\n      'C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028_report.html'\n    ];\n    nodeRepl.write(JSON.stringify(outputs.map(f=>({file:f,size:fs.statSync(f).size})),null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_opno_pivot_2026-06-11T100028.xlsx
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_opno_pivot_2026-06-11T100028_report.html
+> [
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028.xlsx",
+>     "size": 274569
+>   },
+>   {
+>     "file": "C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028_report.html",
+>     "size": 158752
+>   }
+> ]
+> ```
+>
+> 我注意到排序要符合你說的「日、週、月」順序，我把排序固定成這個順序，避免 Excel 裡看起來跳成日、月、週。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./work/build_yield_report.js` (+7 -2)
+>
+> </details>
+>
+> 排序規則已修正，重新產一次並做結構檢查。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Regenerate and verify OPNO pivot workbook",
+>   "code": "{\n  try {\n    await import('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/work/build_yield_report.js?run=' + Date.now());\n    const fs = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028.xlsx';\n    const html='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_2026-06-11T100028_report.html';\n    const buf=fs.readFileSync(out);\n    let eocd=-1;\n    for(let i=buf.length-22;i>=0;i--){ if(buf.readUInt32LE(i)===0x06054b50){ eocd=i; break; } }\n    const entries=[];\n    if(eocd>=0){\n      const count=buf.readUInt16LE(eocd+10);\n      let off=buf.readUInt32LE(eocd+16);\n      for(let i=0;i<count;i++){\n        const nameLen=buf.readUInt16LE(off+28), extraLen=buf.readUInt16LE(off+30), commentLen=buf.readUInt16LE(off+32);\n        entries.push(buf.subarray(off+46, off+46+nameLen).toString('utf8'));\n        off += 46+nameLen+extraLen+commentLen;\n      }\n    }\n    nodeRepl.write(JSON.stringify({xlsxSize:fs.statSync(out).size, htmlSize:fs.statSync(html).size, validZip:eocd>=0, entries},null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_opno_pivot_2026-06-11T100028.xlsx
+> C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_opno_pivot_2026-06-11T100028_report.html
+> {
+>   "xlsxSize": 274569,
+>   "htmlSize": 158752,
+>   "validZip": true,
+>   "entries": [
+>     "[Content_Types].xml",
+>     "_rels/.rels",
+>     "xl/workbook.xml",
+>     "xl/_rels/workbook.xml.rels",
+>     "xl/styles.xml",
+>     "xl/worksheets/sheet1.xml",
+>     "xl/worksheets/sheet2.xml",
+>     "xl/worksheets/sheet3.xml"
+>   ]
+> }
+> ```
+</details>
+
+已改好新版：改用 `OPNO` 區分，不再用 `DATATYPE`。日/週/月也已放在同一張 `樞紐資料` Sheet，格式適合直接做樞紐分析表與樞紐圖。
+
+輸出檔案：
+
+- [yield_summary_by_opno_pivot_2026-06-11T100028.xlsx](./outputs/yield_summary_by_opno_pivot_2026-06-11T100028.xlsx)
+- [yield_summary_by_opno_pivot_2026-06-11T100028_report.html](./outputs/yield_summary_by_opno_pivot_2026-06-11T100028_report.html)
+
+建議樞紐設定：
+
+- 篩選：`統計層級`，選 `日`、`週`、或 `月`
+- 列：`期間`
+- 欄：`OPNO`
+- 值：`片良率` 或 `顆粒良率`
+
+我也確認 `.xlsx` 結構正常，現在只有 `說明`、`原始資料`、`樞紐資料` 三張 Sheet，方便每日更新後重整樞紐。
+
+> 如果每天要更新 除了丟給你還有其他方式嗎
+
+有，除了每天丟給我，也可以做成你自己電腦上每天可重複使用的流程。建議程度由簡到完整：
+
+**方式 1：固定資料夾 + 一鍵產生**
+你每天從系統下載 `.xls` 後丟到固定資料夾，例如 `Downloads` 或指定資料夾，按一下批次檔，自動產生新版 Excel 樞紐資料。這最實用，也最好先做。
+
+**方式 2：固定資料夾 + 自動偵測**
+你把系統匯出的檔案放進資料夾，程式自動抓最新的 `ExportExcel*.xls`，產出報表。你不用改檔名。
+
+**方式 3：排程每天自動跑**
+用 Windows 工作排程器，每天固定時間執行，例如早上 8:30 自動抓最新檔並產出報表。前提是系統下載檔案已經在固定資料夾。
+
+**方式 4：直接串報表系統**
+如果報表系統有 API、資料庫、或固定 URL，可以直接自動登入/下載/撈資料。但這通常需要帳號權限、系統規格，設定較多。
+
+我建議先做 **方式 2**：建立一個固定資料夾，程式每天抓最新的 `ExportExcel*.xls`，輸出同一份 `yield_summary_by_opno_pivot_latest.xlsx`。這樣你的 Excel 樞紐圖可以固定連同一份檔案，每天只要重整就好。
+
+> 好
+
+<details><summary>21 previous messages</summary>
+
+> 好，我幫你做成「固定資料夾抓最新檔」的一鍵更新版。每天只要把系統下載的 `ExportExcel*.xls` 放在 Downloads，執行更新檔，就會覆蓋產生固定名稱的最新樞紐資料 Excel。
+>
+> 我會把產出名稱固定成 `yield_summary_by_opno_pivot_latest.xlsx`。這樣你之後如果有做好的樞紐圖或報告連結，可以每天指向同一份檔案，不用一直換來源檔名。
+>
+> <details><summary>Created 1 file</summary>
+>
+> - Wrote `./outputs/daily_yield_update.cjs` (+277 -0)
+>
+> </details>
+>
+> 一鍵更新程式已建立。再補一個 Windows 批次檔，讓你不用打指令，直接雙擊就會抓最新匯出檔並產生固定名稱的 Excel。
+>
+> <details><summary>Created 1 file</summary>
+>
+> - Wrote `./outputs/run_daily_yield_update.cmd` (+14 -0)
+>
+> </details>
+>
+> 我再在 REPL 裡執行一次這個一鍵更新腳本，確認它能找到 Downloads 最新的 `ExportExcel*.xls`，並產出固定名稱檔案。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify daily updater",
+>   "code": "{\n  try {\n    const { createRequire } = await import('node:module');\n    const req = createRequire('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    req('C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    const fs = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_latest.xlsx';\n    nodeRepl.write(JSON.stringify({exists:fs.existsSync(out), size:fs.statSync(out).size},null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> node_repl kernel exited unexpectedly
+>
+> node_repl diagnostics: {"kernel_pid":3480,"kernel_status":"running","kernel_stderr_tail":"(node:5568) ExperimentalWarning: VM Modules is an experimental feature and might change at any time | (Use `node --trace-warnings ...` to show where the warning was created) | 更新失敗：ENOENT: no such file or directory, scandir 'C:\\Users\\0904211\\Documents\\Codex\\2026-06-11\\excel\\--session-id'","reason":"stdout_eof","stream_error":null}
+> ```
+>
+> 測試時發現 REPL 本身會帶一個內部參數，讓腳本誤以為那是資料夾路徑。雙擊批次檔不會遇到，但我還是把參數判斷補強，避免以後被其他執行環境干擾。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/daily_yield_update.cjs` (+3 -2)
+>
+> </details>
+>
+> 參數處理修好了，現在重新驗證固定輸出的 `latest.xlsx`。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify updater after patch",
+>   "code": "{\n  try {\n    const { createRequire } = await import('node:module');\n    const req = createRequire('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    req('C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    const fs = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_latest.xlsx';\n    nodeRepl.write(JSON.stringify({exists:fs.existsSync(out), size:fs.statSync(out).size},null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> node_repl kernel exited unexpectedly
+>
+> node_repl diagnostics: {"kernel_pid":14432,"kernel_status":"running","kernel_stderr_tail":"更新失敗：ENOENT: no such file or directory, scandir 'C:\\Users\\0904211\\Documents\\Codex\\2026-06-11\\excel\\39cfeabe85c9468b93da8c29732dc67c'","reason":"stdout_eof","stream_error":null}
+> ```
+>
+> REPL 還塞了另一個非路徑參數，這次我把腳本改成「只有參數真的是資料夾時才採用」，並把錯誤處理改成不會直接結束測試環境。這樣批次檔與排程執行都更穩。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/daily_yield_update.cjs` (+2 -2)
+>
+> </details>
+>
+> 再驗證一次。這次會直接採用預設 Downloads 資料夾，符合你每天使用的方式。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify daily updater final",
+>   "code": "{\n  try {\n    const { createRequire } = await import('node:module');\n    const req = createRequire('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    req('C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    const fs = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_latest.xlsx';\n    nodeRepl.write(JSON.stringify({exists:fs.existsSync(out), size:fs.statSync(out).size},null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> Error: ENOENT: no such file or directory, stat 'C:\Users\0904211\Documents\Codex\2026-06-11\excel\outputs\yield_summary_by_opno_pivot_latest.xlsx'
+>     at Module.statSync (node:fs:1725:25)
+>     at C:\Users\0904211\Documents\Codex\2026-06-11\excel\.node_repl_cell_0.mjs:13:71
+>     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+> ```
+>
+> 結果沒有產生 `latest.xlsx`，我先查一下實際抓到的 Downloads 清單與執行路徑。很可能是測試環境的參數/目錄跟雙擊批次檔不同，我把它調到更明確。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect paths for updater",
+>   "code": "{\n  const fs = await import('node:fs');\n  const path = await import('node:path');\n  const dir='C:/Users/0904211/Downloads';\n  const files=fs.readdirSync(dir).filter(n=>/^ExportExcel.*\\.xls$/i.test(n)).map(n=>({n,mtime:fs.statSync(path.join(dir,n)).mtimeMs})).sort((a,b)=>b.mtime-a.mtime).slice(0,5);\n  nodeRepl.write(JSON.stringify({argv: globalThis.process?.argv, downloadsExists:fs.existsSync(dir), files},null,2));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> {
+>   "downloadsExists": true,
+>   "files": [
+>     {
+>       "n": "ExportExcel - 2026-06-11T100028.061.xls",
+>       "mtime": 1781143228063.6665
+>     },
+>     {
+>       "n": "ExportExcel - 2026-06-11T095833.369.xls",
+>       "mtime": 1781143113370.225
+>     },
+>     {
+>       "n": "ExportExcel - 2026-06-11T095732.025.xls",
+>       "mtime": 1781143052026.842
+>     },
+>     {
+>       "n": "ExportExcel - 2026-05-26T171113.537.xls",
+>       "mtime": 1779786673538.8025
+>     },
+>     {
+>       "n": "ExportExcel - 2026-05-26T170942.116.xls",
+>       "mtime": 1779786582116.9304
+>     }
+>   ]
+> }
+> ```
+>
+> 原因找到了：測試環境會帶一些存在的內部資料夾參數，腳本把它們誤認成使用者指定路徑。為了日常使用更可靠，我改成只接受明確的 `--input-dir=` / `--output-dir=`，不再猜測位置參數。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/daily_yield_update.cjs` (+10 -3)
+>
+> </details>
+>
+> 再重跑驗證，這次我清掉模組快取，確定載入的是剛改好的版本。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify updater with cache clear",
+>   "code": "{\n  try {\n    const { createRequire } = await import('node:module');\n    const req = createRequire('file:///C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs');\n    const script='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/daily_yield_update.cjs';\n    delete req.cache[req.resolve(script)];\n    req(script);\n    const fs = await import('node:fs');\n    const out='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/yield_summary_by_opno_pivot_latest.xlsx';\n    nodeRepl.write(JSON.stringify({exists:fs.existsSync(out), size:fs.statSync(out).size},null,2));\n  } catch(e) { nodeRepl.write(e.stack || e.message); }\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> {
+>   "exists": true,
+>   "size": 273938
+> }
+> ```
+</details>
+
+可以，已經幫你做好「每天自己更新」的一鍵版。
+
+你之後每天流程就是：
+
+1. 從報表系統下載新的 `ExportExcel*.xls`
+2. 放在 `Downloads` 資料夾
+3. 雙擊這個檔案：
+   [run_daily_yield_update.cmd](./outputs/run_daily_yield_update.cmd)
+4. 它會自動抓最新的 `ExportExcel*.xls`，產出固定檔名：
+   [yield_summary_by_opno_pivot_latest.xlsx](./outputs/yield_summary_by_opno_pivot_latest.xlsx)
+
+我也把主程式放在這裡：
+[daily_yield_update.cjs](./outputs/daily_yield_update.cjs)
+
+已驗證可以找到最新匯出檔並產生 `latest.xlsx`。之後你的樞紐圖就可以固定連到 `yield_summary_by_opno_pivot_latest.xlsx`，每天更新後只要在 Excel 裡重新整理樞紐即可。
+
+> 公司有限制 能否用excel 巨集完成上述工作
+
+<details><summary>2 previous messages</summary>
+
+> 可以，用 Excel 巨集很適合你們公司有安裝限制的情境，因為不需要 Node/Python，也不用額外套件。我要幫你做一份 VBA 模組：按一下巨集就抓 Downloads 最新的 `ExportExcel*.xls`，產生 `原始資料` 與 `樞紐資料`，再建立/更新樞紐表。
+>
+> <details><summary>Created 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater.bas` (+269 -0)
+>
+> </details>
+</details>
+
+可以，而且這會是最符合公司限制的做法。已幫你準備好 Excel VBA 巨集模組：
+
+[DailyYieldUpdater.bas](./outputs/DailyYieldUpdater.bas)
+
+它會做這些事：
+
+- 自動抓 `Downloads` 裡最新的 `ExportExcel*.xls`
+- 匯入到 `原始資料`
+- 用 `OPNO` 彙整日/週/月良率到同一張 `樞紐資料`
+- 自動建立 `樞紐表`
+- 片良率、顆粒良率皆用加權後資料計算
+
+使用方式：
+
+1. 開一個新的 Excel 活頁簿，另存為 `.xlsm`
+2. 按 `Alt + F11` 開 VBA 編輯器
+3. `File > Import File...` 匯入 `DailyYieldUpdater.bas`
+4. 回 Excel 執行巨集：`更新OPNO良率樞紐資料`
+
+之後每天只要下載新的 `ExportExcel*.xls` 到 Downloads，再執行這個巨集即可。
+
+> 到哪裡修改Downloads路徑
+
+在 VBA 裡修改這一段：
+
+```vb
+Private Function GetLatestExportExcelPath() As String
+    Dim downloadsPath As String
+```
+
+目前路徑是這行：
+
+```vb
+downloadsPath = Environ$("USERPROFILE") & "\Downloads\"
+```
+
+如果你要改成固定資料夾，例如 `D:\YieldData\`，就改成：
+
+```vb
+downloadsPath = "D:\YieldData\"
+```
+
+注意最後要有 `\`。
+
+所以完整會像這樣：
+
+```vb
+Private Function GetLatestExportExcelPath() As String
+    Dim downloadsPath As String
+    Dim fileName As String
+    Dim latestFile As String
+    Dim latestTime As Date
+    Dim fullPath As String
+
+    downloadsPath = "D:\YieldData\"
+    fileName = Dir(downloadsPath & "ExportExcel*.xls")
+```
+
+你要改的檔案是：
+
+[DailyYieldUpdater.bas](./outputs/DailyYieldUpdater.bas)
+
+> 有亂碼
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{A1AD3E2D-315C-4037-BA9F-6B107C1BC1EE}.png`
+
+<details><summary>2 previous messages</summary>
+
+> 這是 VBA 匯入 `.bas` 時的編碼問題：Excel VBA 編輯器常把 UTF-8 當 ANSI 讀，所以中文巨集名稱、中文字串就會亂碼。我幫你改成純英文/ASCII 版本，避免匯入時再壞掉；來源欄位裡必要的中文欄名會用 `ChrW()` 組出來。
+>
+> <details><summary>Created 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+285 -0)
+>
+> </details>
+</details>
+
+是編碼造成的。Excel VBA 匯入 `.bas` 時常把 UTF-8 中文讀壞，所以我另外做了一份「純英文/ASCII 版」，匯入就不會亂碼：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+請改匯入這份，巨集名稱會變成：
+
+```vb
+UpdateOPNOYieldPivot
+```
+
+Sheet 名稱也改成英文：
+
+- `RawData`
+- `PivotData`
+- `PivotTable`
+
+要改 Downloads 路徑一樣在這段：
+
+```vb
+downloadsPath = Environ$("USERPROFILE") & "\Downloads\"
+```
+
+改成例如：
+
+```vb
+downloadsPath = "D:\YieldData\"
+```
+
+這版雖然程式碼沒有中文，但仍然能辨識原始檔的 `Total片數 / NG片數 / Total顆粒 / NG顆粒` 欄位，因為我用 `ChrW()` 在巨集裡組中文欄名，避開亂碼問題。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{EBED54F4-16F0-4EAE-96F4-F998E01793A4}.png`
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{CE76C54E-9C7A-44E1-AE25-5890914F1BDA}.png`
+
+<details><summary>4 previous messages</summary>
+
+> 這個錯誤點不是主因，畫面停在 `sourceWb.Close` 是因為原始檔已經在前面關掉了，但錯誤處理又再關一次，VBA 就丟 `Automation 錯誤`。我把巨集改成關檔後立刻清掉物件，錯誤處理也改成安全關閉，這樣下一次若還有問題會顯示真正的錯誤原因。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+11 -2)
+>
+> </details>
+>
+> 我也同步修中文版那份，雖然你現在應該用 ASCII 版比較穩。接著你重新匯入新版 `.bas` 或直接在 VBA 裡手動改同樣兩處即可。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater.bas` (+11 -2)
+>
+> </details>
+</details>
+
+這個是我巨集裡的錯誤處理寫得不夠穩：原始檔已經關掉後，如果後面發生錯誤，錯誤處理又再執行一次 `sourceWb.Close`，所以跳出 `Automation 錯誤`。
+
+我已修好新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+你可以重新匯入這份，或在 VBA 裡手動改兩處：
+
+第一處，在這行後面加：
+
+```vb
+sourceWb.Close SaveChanges:=False
+Set sourceWb = Nothing
+```
+
+第二處，把錯誤處理這段：
+
+```vb
+If Not sourceWb Is Nothing Then sourceWb.Close SaveChanges:=False
+```
+
+改成：
+
+```vb
+CloseWorkbookSafe sourceWb
+```
+
+並新增這段：
+
+```vb
+Private Sub CloseWorkbookSafe(ByRef wb As Workbook)
+    On Error Resume Next
+    If Not wb Is Nothing Then
+        wb.Close SaveChanges:=False
+        Set wb = Nothing
+    End If
+    On Error GoTo 0
+End Sub
+```
+
+改完後再跑一次。如果還有錯，下一次訊息會比較接近真正原因，不會被關檔錯誤蓋掉。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{ADB7C804-A79A-4C5E-9954-ECC4A26F977E}.png`
+
+<details><summary>8 previous messages</summary>
+
+> 這次訊息變成空白，代表錯誤被錯誤處理流程吃掉了，沒有把真正的 `Err.Number / Err.Description` 保留下來。我先把巨集加上「目前執行步驟」與錯誤碼，讓下一次會明確顯示卡在哪一段。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+25 -1)
+>
+> </details>
+>
+> 我另外把最常出錯的兩段也補強：打開來源檔如果 Excel 沒把 `.xls` HTML 正確轉成工作表，就改用 `QueryTables` 方式匯入；建立樞紐表前會先清掉舊的樞紐快取位置，避免重名或殘留物件卡住。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+25 -10)
+>
+> </details>
+>
+> 我把匯入方式改得再保守一點：優先用 Excel 正常開檔複製；如果公司環境不允許或 HTML `.xls` 開啟失敗，才用備援匯入。這樣比較貼近你手動開檔的行為。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+20 -1)
+>
+> </details>
+>
+> 我順手把 VBA 的錯誤變數宣告移到程序最上方，避免某些公司版 Office 對宣告位置比較挑。這種小細節很煩，但處理掉就安靜很多。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+2 -3)
+>
+> </details>
+</details>
+
+我已更新巨集，解決你這個「Update failed: 空白」的問題，並讓下一次錯誤會顯示：
+
+- 卡在哪個步驟
+- Error number
+- Excel 回傳的錯誤內容
+
+請重新匯入這份新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+這版也改了匯入方式：
+
+1. 先用 `Workbooks.Open` 正常開啟最新 `ExportExcel*.xls`
+2. 如果失敗，再用備援的 `QueryTables` 匯入 HTML `.xls`
+
+你重新匯入後再執行 `UpdateOPNOYieldPivot`。
+如果還跳錯，這次訊息框會顯示真正卡住的 `Step`，把那個畫面截給我，我就能精準修下一段。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{012ECF98-5962-4BB1-9135-8361EB9BD9B2}.png`
+
+<details><summary>3 previous messages</summary>
+
+> 這個訊息很有用：巨集已經跑到 `Build PivotData`，但在 `RawData` 的第 1 列找不到 `RECORDDATE`。通常是系統匯出的 HTML `.xls` 匯入後，標題列沒有落在第 1 列，或前面多了空白/格式列。我把巨集改成「自動搜尋標題列」，不要只認第 1 列。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+29 -3)
+>
+> </details>
+>
+> 我再加一個保險：如果 `QueryTables` 匯入成整段 HTML 而不是表格，巨集會嘗試用 Excel 開檔複製，不會被空白第一列誤導。這版主要修正點仍是「尋找 `RECORDDATE` 所在列」。
+</details>
+
+這次錯誤原因是：巨集在 `RawData` 第 1 列找不到 `RECORDDATE`，但你的匯出檔匯入 Excel 後，標題列可能不是第 1 列，前面可能有空白列或格式列。
+
+我已修正新版，會自動在前 30 列搜尋 `RECORDDATE` 作為標題列：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+請重新匯入這份，再執行：
+
+```vb
+UpdateOPNOYieldPivot
+```
+
+如果再錯，訊息會顯示 `RawData A1 is: ...`，那就代表來源檔不是被 Excel 匯成表格，而是整段 HTML 文字，我再幫你改成純 VBA HTML 表格解析版。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{44120955-CFC8-4F42-B727-C1DE95B14CB7}.png`
+
+<details><summary>4 previous messages</summary>
+
+> 這次是 `型態不符合`，位置在 `Build PivotData`。最可能是日期或數字欄位被 Excel 當成文字/錯誤值，尤其系統匯出的 HTML `.xls` 很常這樣。我把 VBA 改成自己解析日期與數字，不再直接用 `CDate` / `Val` 硬轉。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+50 -6)
+>
+> </details>
+>
+> 我再補一個防呆：如果沒有任何資料被彙整進字典，會直接提示「沒有有效資料列」，避免後面排序空集合又出奇怪錯誤。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -0)
+>
+> </details>
+</details>
+
+已修正 `型態不符合`。新版改成：
+
+- 日期不用 `CDate` 硬轉，改用 `ParseRecordDate`
+- 數字不用直接轉型，改用 `ToNumber`
+- 空白、逗號、百分比、文字格式都會先清理
+- 如果沒有有效資料列，會顯示明確錯誤
+
+請重新匯入這份新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+再執行：
+
+```vb
+UpdateOPNOYieldPivot
+```
+
+如果還錯，新的錯誤應該會指出是哪一列的 `RECORDDATE` 或資料內容有問題。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{44A61E44-C201-4644-B9E5-5C6B061C2E0C}.png`
+
+<details><summary>6 previous messages</summary>
+
+> 這個錯誤點更明確了：第 613 列的 `RECORDDATE` 不是正常日期，可能是空白、合計列、或 Excel 欄寬造成 `.Text` 讀到 `??`。我把日期讀取改用 `.Value2`，並且遇到非日期列就跳過，不讓整個更新中斷。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+42 -15)
+>
+> </details>
+>
+> 我剛才的修正會跳過非日期列，不過我要再確認一下 VBA 區塊縮排與 `If...End If` 配對正確，避免修掉一個錯又冒出編譯錯。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect patched VBA section",
+>   "code": "{\n  const fs = await import('node:fs');\n  const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n  const text=fs.readFileSync(file,'utf8');\n  const start=text.indexOf('Private Sub BuildPivotData');\n  const end=text.indexOf('Private Function HeaderMap');\n  nodeRepl.write(text.slice(start,end));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> Private Sub BuildPivotData(ByVal rawWs As Worksheet, ByVal outWs As Worksheet)
+>     Dim headers As Object
+>     Dim dict As Object
+>     Dim headerRow As Long
+>     Dim lastRow As Long
+>     Dim r As Long
+>     Dim rowInfo As String
+>     Dim recordDate As Date
+>     Dim opno As String
+>     Dim totalPanels As Double
+>     Dim ngPanels As Double
+>     Dim totalDies As Double
+>     Dim ngDies As Double
+>
+>     Set headers = HeaderMap(rawWs)
+>     headerRow = CLng(headers("__HEADER_ROW"))
+>     RequireHeader headers, "RECORDDATE"
+>     RequireHeader headers, "OPNO"
+>     RequireHeader headers, TotalPanelHeader()
+>     RequireHeader headers, NgPanelHeader()
+>     RequireHeader headers, TotalDieHeader()
+>     RequireHeader headers, NgDieHeader()
+>
+>     Set dict = CreateObject("Scripting.Dictionary")
+>     lastRow = rawWs.Cells(rawWs.Rows.Count, headers("RECORDDATE")).End(xlUp).Row
+>
+>     For r = headerRow + 1 To lastRow
+>         If Len(Trim$(CStr(rawWs.Cells(r, headers("RECORDDATE")).Value2))) > 0 Then
+>             rowInfo = "Row " & r
+>             If TryParseRecordDate(rawWs.Cells(r, headers("RECORDDATE")).Value2, recordDate) Then
+>                 opno = Trim$(CStr(rawWs.Cells(r, headers("OPNO")).Value2))
+>             If Len(opno) = 0 Then opno = "(blank)"
+>
+>                 totalPanels = ToNumber(rawWs.Cells(r, headers(TotalPanelHeader())).Value2)
+>                 ngPanels = ToNumber(rawWs.Cells(r, headers(NgPanelHeader())).Value2)
+>                 totalDies = ToNumber(rawWs.Cells(r, headers(TotalDieHeader())).Value2)
+>                 ngDies = ToNumber(rawWs.Cells(r, headers(NgDieHeader())).Value2)
+>
+>                 AddAgg dict, "Day", Format$(recordDate, "yyyy-mm-dd"), opno, totalPanels, ngPanels, totalDies, ngDies
+>                 AddAgg dict, "Week", IsoWeekKey(recordDate), opno, totalPanels, ngPanels, totalDies, ngDies
+>                 AddAgg dict, "Month", Format$(recordDate, "yyyy-mm"), opno, totalPanels, ngPanels, totalDies, ngDies
+>             End If
+>         End If
+>     Next r
+>
+>     If dict.Count = 0 Then
+>         Err.Raise vbObjectError + 211, , "No valid data rows found after header row " & headerRow
+>     End If
+>
+>     WriteAgg outWs, dict
+> End Sub
+>
+> Private Function TryParseRecordDate(ByVal rawValue As Variant, ByRef resultDate As Date) As Boolean
+>     Dim parts As Variant
+>     Dim valueText As String
+>     Dim y As Long
+>     Dim m As Long
+>     Dim d As Long
+>
+>     If IsDate(rawValue) Then
+>         resultDate = CDate(rawValue)
+>         TryParseRecordDate = True
+>         Exit Function
+>     End If
+>
+>     If IsNumeric(rawValue) Then
+>         If CDbl(rawValue) > 20000 And CDbl(rawValue) < 80000 Then
+>             resultDate = DateSerial(1899, 12, 30) + CDbl(rawValue)
+>             TryParseRecordDate = True
+>             Exit Function
+>         End If
+>     End If
+>
+>     valueText = CStr(rawValue)
+>     valueText = Trim$(valueText)
+>     valueText = Replace(valueText, "-", "/")
+>
+>     If IsDate(valueText) Then
+>         resultDate = CDate(valueText)
+>         TryParseRecordDate = True
+>         Exit Function
+>     End If
+>
+>     parts = Split(valueText, "/")
+>     If UBound(parts) = 2 Then
+>         y = CLng(ToNumber(CStr(parts(0))))
+>         m = CLng(ToNumber(CStr(parts(1))))
+>         d = CLng(ToNumber(CStr(parts(2))))
+>         If y >= 1900 And m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
+>             resultDate = DateSerial(y, m, d)
+>             TryParseRecordDate = True
+>             Exit Function
+>         End If
+>     End If
+>
+>     TryParseRecordDate = False
+> End Function
+>
+> Private Function ToNumber(ByVal rawValue As Variant) As Double
+>     Dim valueText As String
+>
+>     If IsNumeric(rawValue) Then
+>         ToNumber = CDbl(rawValue)
+>         Exit Function
+>     End If
+>
+>     valueText = CStr(rawValue)
+>     valueText = Trim$(valueText)
+>     valueText = Replace(valueText, ",", "")
+>     valueText = Replace(valueText, "%", "")
+>
+>     If Len(valueText) = 0 Then
+>         ToNumber = 0
+>     ElseIf IsNumeric(valueText) Then
+>         ToNumber = CDbl(valueText)
+>     Else
+>         ToNumber = 0
+>     End If
+> End Function
+> ```
+>
+> 另外我看到外層判斷也在 `CStr(Value2)`，如果儲存格本身是 Excel error 值也可能再觸發型態錯誤。我順手加上 `IsError` 防護，讓它只處理真正可讀的資料列。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+13 -1)
+>
+> </details>
+</details>
+
+這次第 613 列的 `RECORDDATE` 讀到 `??`，代表那一列不是有效日期列，可能是匯入後的空白/合計/格式殘留列，或 Excel 顯示文字異常。
+
+我已更新巨集，改成：
+
+- 用 `.Value2` 讀日期，不用 `.Text`
+- 可以處理 Excel 日期序號
+- 遇到無效日期列就跳過，不中斷整個更新
+- 遇到 Excel error 儲存格也跳過
+
+請重新匯入最新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+再執行 `UpdateOPNOYieldPivot`。
+這次應該會跳過第 613 列那種非日期資料，繼續產生 `PivotData` 和 `PivotTable`。
+
+> OPNO Yield Pivot 這個欄位在哪
+
+`OPNO Yield Pivot` 不是欄位，是巨集在 `PivotTable` 工作表的標題，放在：
+
+```text
+PivotTable!A1
+```
+
+真正樞紐表是從這裡開始建立：
+
+```text
+PivotTable!A3
+```
+
+樞紐表裡的欄位是這些，來源在 `PivotData` 工作表：
+
+- `PeriodType`
+- `Period`
+- `OPNO`
+- `PanelYield`
+- `DieYield`
+- `TotalPanels`
+- `NGPanels`
+- `TotalDies`
+- `NGDies`
+- `RowCount`
+
+巨集目前預設樞紐配置是：
+
+- 篩選：`PeriodType`
+- 列：`Period`
+- 欄：`OPNO`
+- 值：`Avg PanelYield`
+- 值：`Avg DieYield`
+
+所以你要看或拉圖，請到 `PivotTable` 工作表；如果要自己建立樞紐表，資料來源請選 `PivotData!A:J`。
+
+> 果要自己建立樞紐表 如何設計 OPNO Yield Pivot
+
+可以。你自己建立樞紐表時，`OPNO Yield Pivot` 可以這樣設計：
+
+**資料來源**
+
+選 `PivotData` 工作表的資料範圍，例如：
+
+```text
+PivotData!A:J
+```
+
+或選整張表的資料區。
+
+**樞紐欄位配置**
+
+建議第一版這樣拉：
+
+| 區域 | 放入欄位 |
+|---|---|
+| 篩選 | `PeriodType` |
+| 列 | `Period` |
+| 欄 | `OPNO` |
+| 值 | `PanelYield` |
+| 值 | `DieYield` |
+
+`PanelYield` 和 `DieYield` 放到值區後，請把「值欄位設定」改成：
+
+```text
+平均值
+```
+
+數值格式改成：
+
+```text
+百分比，小數 2 或 4 位
+```
+
+**使用方式**
+
+- 要看每日：`PeriodType` 選 `Day`
+- 要看週：`PeriodType` 選 `Week`
+- 要看月：`PeriodType` 選 `Month`
+- 橫向會依 `OPNO` 展開
+- 縱向會依日期/週/月顯示趨勢
+
+如果你要畫圖，建議用「樞紐分析圖」選折線圖：
+
+- X 軸：`Period`
+- 系列：`OPNO`
+- Y 軸：`PanelYield` 或 `DieYield`
+
+最常用良率趨勢圖可以只放一個值：`PanelYield`，這樣圖會乾淨很多。
+
+> 資訊量很多, 我會by opno畫類似圖,並且每日更新.  我要怎麼做最有效率
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{BB714CD1-D749-4B21-9562-A031525F3DC2}.png`
+
+<details><summary>1 previous message</summary>
+
+> 你這個情境最有效率的重點不是每天重做圖，而是把「資料更新」和「圖表版面」分開。也就是巨集每天只更新 `RawData` / `PivotData`，你的圖表固定放在 Dashboard，不要被巨集清掉。
+</details>
+
+最有效率做法是這樣：
+
+**建議架構**
+
+1. `RawData`
+   巨集每天匯入最新系統檔。
+
+2. `PivotData`
+   巨集每天重算 OPNO 的 Day / Week / Month 良率資料。
+
+3. `Dashboard`
+   你自己放圖表、篩選器、版面。每天不要重做，只要重新整理。
+
+**圖表建議**
+
+你現在這張圖資訊太多，`TotalDies` 是百萬級，`PanelYield / DieYield` 是百分比，放同一張會很擠。建議拆成兩張：
+
+- 圖 1：良率趨勢
+  X 軸：`Period`
+  系列：`PanelYield`、`DieYield`
+  Y 軸：百分比
+
+- 圖 2：產出量趨勢
+  X 軸：`Period`
+  系列：`TotalDies` 或 `TotalPanels`
+  Y 軸：數量
+
+如果一定要同一張，就用組合圖：
+
+- `PanelYield`：折線圖，主座標軸，百分比
+- `DieYield`：折線圖，主座標軸，百分比
+- `TotalDies`：直條圖，副座標軸
+
+**樞紐表欄位設定**
+
+做一個主要樞紐圖：
+
+| 區域 | 欄位 |
+|---|---|
+| 篩選器 / 交叉分析篩選器 | `OPNO` |
+| 篩選器 / 交叉分析篩選器 | `PeriodType` |
+| 軸 / 列 | `Period` |
+| 值 | `PanelYield` |
+| 值 | `DieYield` |
+| 值 | `TotalDies` |
+
+`PanelYield`、`DieYield` 設成百分比。
+`TotalDies` 不要跟良率混在同一 Y 軸，除非用副座標軸。
+
+**每日更新流程**
+
+每天只做：
+
+1. 下載新的 `ExportExcel*.xls`
+2. 執行巨集 `UpdateOPNOYieldPivot`
+3. 在 Excel 按「全部重新整理」
+4. Dashboard 圖表自動更新
+
+**我建議再改巨集一點**
+
+目前巨集會重建 `PivotTable`，但你如果要長期使用，最好改成：
+
+- 巨集只更新 `RawData` 和 `PivotData`
+- 不清除你的 Dashboard
+- 把 `PivotData` 轉成 Excel 表格，例如 `tblYieldPivot`
+- 你的所有樞紐表/圖表都連到 `tblYieldPivot`
+
+這樣你只要設計一次圖表，以後每天更新資料就好。這是最省事、最穩的做法。
+
+> 每天更新 圖表不會主動抓最新增的日期, 要自己重新整理然後打勾最新日期 有甚麼建議
+
+<details><summary>6 previous messages</summary>
+
+> 這個問題很典型：樞紐圖不是沒有新資料，而是 `Period` 被手動篩選過，新增日期不會自動被勾選。最穩的做法是讓巨集每天更新完資料後，自動清除 `Period` 篩選並重新整理全部樞紐表。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect current VBA file",
+>   "code": "{\n  const fs = await import('node:fs');\n  const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n  const text=fs.readFileSync(file,'utf8');\n  nodeRepl.write(text.slice(0,2200));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> Attribute VB_Name = "DailyYieldUpdater"
+> Option Explicit
+>
+> Public Sub UpdateOPNOYieldPivot()
+>     Dim sourcePath As String
+>     Dim sourceWb As Workbook
+>     Dim targetWb As Workbook
+>     Dim srcWs As Worksheet
+>     Dim rawWs As Worksheet
+>     Dim pivotDataWs As Worksheet
+>     Dim pivotWs As Worksheet
+>     Dim stepName As String
+>     Dim errNumber As Long
+>     Dim errDescription As String
+>
+>     Application.ScreenUpdating = False
+>     Application.DisplayAlerts = False
+>
+>     On Error GoTo Fail
+>
+>     stepName = "Set target workbook"
+>     Set targetWb = ThisWorkbook
+>
+>     stepName = "Find latest ExportExcel file"
+>     sourcePath = GetLatestExportExcelPath()
+>     If Len(sourcePath) = 0 Then Err.Raise vbObjectError + 100, , "No ExportExcel*.xls file found."
+>
+>     stepName = "Prepare output sheets"
+>     Set rawWs = EnsureSheet(targetWb, "RawData")
+>     Set pivotDataWs = EnsureSheet(targetWb, "PivotData")
+>     Set pivotWs = EnsureSheet(targetWb, "PivotTable")
+>
+>     stepName = "Clear output sheets"
+>     rawWs.Cells.Clear
+>     pivotDataWs.Cells.Clear
+>     pivotWs.Cells.Clear
+>
+>     stepName = "Import source data"
+>     ImportSourceData sourcePath, rawWs
+>
+>     stepName = "Build PivotData"
+>     BuildPivotData rawWs, pivotDataWs
+>
+>     stepName = "Build PivotTable"
+>     BuildPivotTable targetWb, pivotDataWs, pivotWs
+>
+>     stepName = "AutoFit columns"
+>     rawWs.Columns.AutoFit
+>     pivotDataWs.Columns.AutoFit
+>     pivotWs.Columns.AutoFit
+>
+>     Application.DisplayAlerts = True
+>     Application.ScreenUpdating = True
+>
+>     MsgBox "Update complete:" & vbCrLf & sourcePath, vbInformation
+>     Exit Sub
+>
+> Fail:
+>     errNumber = Err.Number
+>     errDescription = Err.Description
+>     If Len(errDescription) = 0 Then errDescription = "(No error description returned by Excel.)"
+>
+>     CloseWorkbookSafe sourceWb
+>     Application.DisplayAlerts = True
+>     Application.ScreenUpdating = True
+>     MsgBox "Update failed." & vbCrLf & _
+>            "Step: " & stepName & vbCrLf & _
+>            "Error number: " & errNumber & vbCrLf & _
+>            "Error: " & errDescription, vbExclamation
+> End Sub
+>
+> Private Sub ImportSourceData(ByVal sourcePath As String, ByVal rawWs As Worksheet)
+>     Dim tempWb As Workbook
+>     Dim tempWs As Worksheet
+>     Dim qt As QueryTab
+> ```
+>
+> 我會幫你加一個新的日常用巨集：只更新 `RawData` / `PivotData`，不重建、不清掉你做好的圖表，然後自動刷新所有樞紐表並清除 `Period` 勾選篩選。這樣新增日期會自己進圖表。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+60 -0)
+>
+> </details>
+>
+> 接著我把 `PivotData` 自動轉成 Excel 表格 `tblYieldPivot`，並加上刷新既有樞紐表的程序。以後你建立圖表時資料來源用這張表，範圍會自動長大。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+43 -0)
+>
+> </details>
+</details>
+
+最有效率的做法：**不要每天手動勾最新日期**，也不要讓巨集每天重建圖表。
+
+我已幫你更新巨集，新增一個日常更新用巨集：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+新版檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+建議你這樣做：
+
+1. 重新匯入新版 `.bas`
+2. 第一次自己建立 Dashboard / 樞紐圖
+3. 樞紐資料來源選：
+
+```text
+tblYieldPivot
+```
+
+或 `PivotData` 工作表的表格。
+
+4. 圖表篩選只放：
+   - `OPNO`
+   - `PeriodType`
+
+5. `Period` 放在 X 軸，不要手動勾選日期。
+
+以後每天只跑：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+它會：
+
+- 抓最新 `ExportExcel*.xls`
+- 更新 `RawData`
+- 重算 `PivotData`
+- 自動把資料轉成表格 `tblYieldPivot`
+- 自動重新整理既有樞紐表/圖表
+- 自動清除 `Period` 的手動勾選篩選，讓新增日期進圖表
+
+原本的 `UpdateOPNOYieldPivot` 會重建 `PivotTable`，比較適合測試；你正式做 Dashboard 後，建議每天只用 `UpdateOPNOYieldDataOnly`。
+
+> 假設我A5AC004 A5FT001 A5FT002 A5SC002 等等都要建一個獨立的圖表，我是要複製很多樞紐表還在在同一個表格取不同位置畫圖
+
+建議：**不要為每個 OPNO 複製一堆樞紐表**。最有效率、最穩的是：
+
+**一個資料表 `tblYieldPivot` + 一個 Dashboard + 多張一般圖表**
+
+也就是：
+
+- `PivotData / tblYieldPivot` 當唯一資料來源
+- 每個 OPNO 做一個小圖
+- 圖表資料用公式從 `tblYieldPivot` 抓對應 OPNO
+- 每天巨集更新 `tblYieldPivot`，所有圖表自動跟著更新
+
+原因是：
+
+- 複製很多樞紐表會變慢
+- 每張樞紐圖都有自己的篩選狀態，新增日期容易漏勾
+- 之後維護格式很麻煩
+- 樞紐快取多了檔案會變大
+
+**我建議的設計**
+
+做一張 `ChartData` 工作表，格式類似：
+
+| Period | A5AC004 PanelYield | A5AC004 DieYield | A5FT001 PanelYield | A5FT001 DieYield | A5FT002 PanelYield | A5FT002 DieYield |
+|---|---:|---:|---:|---:|---:|---:|
+
+然後 Dashboard 上每個 OPNO 的圖都吃 `ChartData` 的對應兩欄。
+
+如果你要每個 OPNO 一張圖：
+
+- X 軸：`Period`
+- 線 1：`PanelYield`
+- 線 2：`DieYield`
+- 可選：`TotalDies` 用另一張量圖，或放副軸
+
+**更推薦的圖表配置**
+
+如果 OPNO 很多，例如 10 個以上：
+
+- 不要全部塞在一張圖
+- 做成「小 multiples」：每個 OPNO 一個小圖
+- 每張只畫 `PanelYield` / `DieYield`
+- `PeriodType` 固定看 `Month` 或 `Week`
+- 日資料另外做一張詳細查詢圖
+
+**什麼時候才複製樞紐表？**
+
+只有這幾種情況才建議：
+
+- 每個 OPNO 要不同篩選邏輯
+- 每張圖要用不同欄位組合
+- 圖表數量很少，例如 3 到 5 張
+
+如果像你說的 `A5AC004、A5FT001、A5FT002、A5SC002...` 會越來越多，我會選：
+
+```text
+tblYieldPivot -> ChartData -> Dashboard charts
+```
+
+這樣每日更新最乾淨。
+
+> 再多一點範例或解釋
+
+可以，我用你現在的需求拆成三種做法，最推薦第 2 種。
+
+**做法 1：很多樞紐表**
+每個 OPNO 複製一份樞紐表，例如：
+
+- `Pivot_A5AC004`
+- `Pivot_A5FT001`
+- `Pivot_A5FT002`
+- `Pivot_A5SC002`
+
+每張樞紐表只篩選一個 OPNO，再各自畫圖。
+
+優點：Excel 內建操作直覺。
+缺點：最不適合長期每日更新，因為每張樞紐表都可能有自己的篩選狀態。OPNO 多了以後很難維護。
+
+**做法 2：一張資料表 + ChartData + 多張圖，最推薦**
+
+資料來源仍然只有一張：
+
+```text
+PivotData / tblYieldPivot
+```
+
+另外建一張 `ChartData`，整理成畫圖專用格式。
+
+例如你要看 `Month`：
+
+| Period | A5AC004 PanelYield | A5AC004 DieYield | A5FT001 PanelYield | A5FT001 DieYield |
+|---|---:|---:|---:|---:|
+| 2026-01 | 98.50% | 99.99% | 97.20% | 99.98% |
+| 2026-02 | 96.80% | 99.99% | 95.90% | 99.97% |
+| 2026-03 | 97.10% | 100.00% | 96.50% | 99.99% |
+
+然後：
+
+- A5AC004 圖表吃 B:C 欄
+- A5FT001 圖表吃 D:E 欄
+- A5FT002 圖表吃 F:G 欄
+- A5SC002 圖表吃 H:I 欄
+
+每天巨集更新 `tblYieldPivot` 後，`ChartData` 公式自動抓新資料，圖表跟著更新。
+
+範例公式概念：
+
+```excel
+=AVERAGEIFS(tblYieldPivot[PanelYield], tblYieldPivot[PeriodType], "Month", tblYieldPivot[Period], $A2, tblYieldPivot[OPNO], "A5AC004")
+```
+
+DieYield：
+
+```excel
+=AVERAGEIFS(tblYieldPivot[DieYield], tblYieldPivot[PeriodType], "Month", tblYieldPivot[Period], $A2, tblYieldPivot[OPNO], "A5AC004")
+```
+
+TotalDies：
+
+```excel
+=SUMIFS(tblYieldPivot[TotalDies], tblYieldPivot[PeriodType], "Month", tblYieldPivot[Period], $A2, tblYieldPivot[OPNO], "A5AC004")
+```
+
+這樣你不是複製樞紐表，而是用公式建立「穩定圖表資料區」。
+
+**做法 3：一張樞紐表 + 篩選器切換 OPNO**
+
+只做一張樞紐圖，用 slicer 或篩選器選 OPNO。
+
+優點：最簡單。
+缺點：一次只能看一個或少數 OPNO，不適合你要每個 OPNO 都有獨立圖表的報告。
+
+**我會建議你的報告版面**
+
+如果你要很多 OPNO，我會做這樣：
+
+```text
+Dashboard
+------------------------------------------------
+[PeriodType: Month]  [更新日期]
+
+A5AC004        A5FT001
+小圖            小圖
+
+A5FT002        A5SC002
+小圖            小圖
+
+A5TC001        A5AV001
+小圖            小圖
+```
+
+每張小圖：
+
+- X 軸：`Period`
+- 線 1：`PanelYield`
+- 線 2：`DieYield`
+- 不建議放 `TotalDies`，因為數量級太大
+
+如果一定要看產出量，另外做一張量圖：
+
+```text
+良率圖：PanelYield / DieYield
+產出圖：TotalDies / TotalPanels
+```
+
+**為什麼不要每個 OPNO 一張樞紐表**
+
+假設你有 20 個 OPNO：
+
+- 20 張樞紐表
+- 20 個圖表
+- 20 個 OPNO 篩選
+- 每天新增日期時，可能有部分圖沒有吃到新日期
+- 樞紐快取變多，檔案變慢
+
+但如果用 `ChartData`：
+
+- 只有一份資料來源
+- 公式固定
+- 圖表固定
+- 每天只更新資料
+- 新月份/新日期加進 `ChartData` 後，圖會跟著長
+
+**最實用結論**
+
+你的情境我會這樣做：
+
+1. 巨集每天產生 `PivotData / tblYieldPivot`
+2. 另外做 `ChartData_Month`
+3. 每個 OPNO 兩欄：`PanelYield`、`DieYield`
+4. Dashboard 每個 OPNO 一張小折線圖
+5. 每天跑 `UpdateOPNOYieldDataOnly`
+6. 圖表自動更新，不碰樞紐表篩選
+
+這是最適合「很多 OPNO、每日更新、固定報告圖表」的方式。
+
+> 點選樞紐資料似乎無法單選一個opno
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Temp/codex-clipboard-75c5ba9d-d046-4cdf-8129-5262e9c8193c.png`
+
+你現在這張圖不是「單一 OPNO 圖」，而是把 `OPNO` 放在**圖例/系列**裡了，所以 Excel 會把所有 OPNO 都畫出來，右邊才會出現一大串：
+
+```text
+A5AC004 - Avg PanelYield
+A5FT001 - Avg PanelYield
+A5FT002 - Avg PanelYield
+...
+```
+
+要單選一個 OPNO，有兩種方式。
+
+**方式 1：把 OPNO 移到篩選器**
+
+在樞紐圖欄位清單裡調整：
+
+| 區域 | 欄位 |
+|---|---|
+| 篩選器 | `OPNO` |
+| 軸 | `Period` |
+| 值 | `PanelYield` |
+| 值 | `DieYield` |
+| 值 | `TotalPanels` |
+
+不要把 `OPNO` 放在：
+
+```text
+圖例 / 系列
+```
+
+這樣圖表上方會有 `OPNO` 篩選下拉，就可以單選 `A5AC004`。
+
+**方式 2：用交叉分析篩選器 Slicer**
+
+選樞紐圖或樞紐表後：
+
+```text
+樞紐分析圖分析 > 插入交叉分析篩選器 > 勾選 OPNO
+```
+
+然後在 slicer 上點單一 OPNO。
+如果要只選一個，右上角多選按鈕不要開啟，直接點 `A5AC004` 即可。
+
+你現在會「似乎無法單選」，多半是因為 `OPNO` 在系列區，不是在篩選區。
+
+另外你這張圖的 Y 軸也怪怪的，`PanelYield` 顯示到 `70000%`，是因為 `TotalPanels` 和良率混在同一軸或良率被算成平均後格式不對。建議先只放：
+
+- `PanelYield`
+- `DieYield`
+
+等單一 OPNO 圖正常後，再把 `TotalPanels` 加到副座標軸。
+
+> 上述是否就無法創建很多圖
+
+可以創建很多圖，**但不要用同一張樞紐圖靠 OPNO 篩選器來複製很多張**，那樣每張圖其實會綁同一套樞紐篩選，維護會很痛苦。
+
+你有兩條路：
+
+**方案 A：少量圖，用多張樞紐圖**
+如果只有 3 到 5 個 OPNO，可以：
+
+- 每個 OPNO 一張樞紐表
+- 每張樞紐表篩選固定一個 OPNO
+- 每張樞紐表各自產生一張樞紐圖
+
+可以做，但 OPNO 一多就不建議。
+
+**方案 B：很多圖，用 ChartData，推薦**
+如果你要 `A5AC004、A5FT001、A5FT002、A5SC002...` 很多張固定圖，建議不要靠樞紐圖，而是：
+
+```text
+PivotData / tblYieldPivot
+        ↓
+ChartData
+        ↓
+很多普通折線圖
+```
+
+每張普通圖只吃 `ChartData` 裡對應 OPNO 的資料區。
+這樣每張圖彼此獨立，不受樞紐篩選器影響，每天更新也比較穩。
+
+例如：
+
+| Period | A5AC004 PanelYield | A5AC004 DieYield | A5FT001 PanelYield | A5FT001 DieYield |
+|---|---:|---:|---:|---:|
+| 2026-01 | 98.1% | 99.9% | 96.5% | 99.8% |
+| 2026-02 | 97.8% | 99.9% | 95.2% | 99.7% |
+
+然後：
+
+- 圖 1：Period + A5AC004 兩欄
+- 圖 2：Period + A5FT001 兩欄
+- 圖 3：Period + A5FT002 兩欄
+
+這樣你可以建立很多圖，而且每天只要更新 `ChartData`，圖會跟著更新。
+
+簡單講：
+
+- 想互動查詢：用一張樞紐圖 + OPNO 篩選器
+- 想固定報告、很多 OPNO 圖：用 `ChartData` + 普通圖表
+
+你的情境比較像固定報告，所以我建議走 **ChartData + 多張普通圖表**。
+
+> ChartData 如何自動更新
+
+<details><summary>6 previous messages</summary>
+
+> 對，你需要讓 `ChartData` 也由巨集每天重建，圖表才不用手動改範圍。我幫你把巨集加一段：更新 `PivotData` 後，自動產生 `ChartData_Month`，格式會變成每個 OPNO 固定三欄，圖表就接這張表。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+6 -0)
+>
+> </details>
+>
+> 我會用 `Month` 當預設報告週期，產生 `ChartData_Month`。如果之後你要週圖或日圖，同一段可以改成 `"Week"` 或 `"Day"`，或我也能幫你一次產三張。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+118 -0)
+>
+> </details>
+>
+> 我也修一下格式：`ChartData_Month` 會每個 OPNO 三欄，其中前兩欄是良率百分比，第三欄是數量，不能整片都套百分比。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -1)
+>
+> </details>
+</details>
+
+`ChartData` 最好的自動更新方式是：讓巨集每天更新 `PivotData` 後，順便重建 `ChartData_Month`。我已經幫你加進新版巨集了：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+更新後會多一張：
+
+```text
+ChartData_Month
+```
+
+格式會像這樣：
+
+| Period | A5AC004 PanelYield | A5AC004 DieYield | A5AC004 TotalPanels | A5FT001 PanelYield | A5FT001 DieYield | A5FT001 TotalPanels |
+|---|---:|---:|---:|---:|---:|---:|
+| 2026-01 | 92.31% | 100.00% | 150 | 88.50% | 99.99% | 120 |
+| 2026-02 | ... | ... | ... | ... | ... | ... |
+
+你之後做圖時，不要直接用樞紐圖，改用一般圖表：
+
+- X 軸：`ChartData_Month[Period]`
+- A5AC004 圖：
+  - `A5AC004 PanelYield`
+  - `A5AC004 DieYield`
+  - 可選 `A5AC004 TotalPanels`
+- A5FT001 圖：
+  - `A5FT001 PanelYield`
+  - `A5FT001 DieYield`
+  - 可選 `A5FT001 TotalPanels`
+
+每天只跑：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+它會自動更新：
+
+1. `RawData`
+2. `PivotData`
+3. `tblYieldPivot`
+4. `ChartData_Month`
+5. 既有樞紐表/圖表重新整理
+
+重點：你的圖表只要接到 `ChartData_Month` 的固定欄位，以後新增月份會自動往下增加，不需要每天去勾最新日期。
+
+> 再新增日與週分別獨立頁籤
+
+<details><summary>4 previous messages</summary>
+
+> 可以，我把巨集改成每天同時產生三張畫圖資料頁：`ChartData_Day`、`ChartData_Week`、`ChartData_Month`。這樣你的日圖、週圖、月圖可以各自接固定頁籤，不互相干擾。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+2 -2)
+>
+> </details>
+>
+> 我會保留原本 `BuildChartData` 的邏輯，只新增一個包裝程序一次呼叫 Day / Week / Month，之後如果你只想要其中一種也很好改。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+6 -0)
+>
+> </details>
+</details>
+
+已更新巨集，現在會同時產生三張獨立 ChartData 頁籤：
+
+- `ChartData_Day`
+- `ChartData_Week`
+- `ChartData_Month`
+
+新版檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+每天執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+會更新：
+
+1. `RawData`
+2. `PivotData`
+3. `ChartData_Day`
+4. `ChartData_Week`
+5. `ChartData_Month`
+6. 既有圖表/樞紐重新整理
+
+之後你可以這樣接圖：
+
+- 每日趨勢圖接 `ChartData_Day`
+- 每週趨勢圖接 `ChartData_Week`
+- 每月趨勢圖接 `ChartData_Month`
+
+每張 ChartData 都會依 OPNO 展開欄位，例如：
+
+```text
+A5AC004 PanelYield
+A5AC004 DieYield
+A5AC004 TotalPanels
+```
+
+> 改一下格式
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{0D060C0A-EF1F-490E-BAA3-856189B4AE29}.png`
+
+<details><summary>2 previous messages</summary>
+
+> 看起來 `ChartData_Day` 的 `Period` 被 Excel 當成日期序號顯示了，所以變成 `46132` 這種數字。這不是資料錯，是儲存格格式要指定成日期格式；我把巨集改成日/週/月各自套正確格式。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+16 -0)
+>
+> </details>
+</details>
+
+已改好格式。新版巨集會自動套用：
+
+- `ChartData_Day` 的 `Period`：`yyyy-mm-dd`
+- `ChartData_Week` 的 `Period`：文字格式
+- `ChartData_Month` 的 `Period`：`yyyy-mm`
+
+新版檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+請重新匯入後執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+你現在看到的 `46132` 其實是 Excel 日期序號，重新跑新版後會顯示成日期，例如 `2026-04-20`。
+
+> 最後細節修改，日/周/月 Period 格式能否接改成可以時間排序的格式，然後最新的放最上面，以利圖表每次都撈最近的日期
+
+<details><summary>8 previous messages</summary>
+
+> 可以，這個調整很關鍵：`Period` 要能排序，而且資料列要最新在上面。我要把 `PivotData` 與三張 `ChartData_*` 都改成依時間新到舊輸出，並把週格式改成可排序的 `yyyy-Www`，日/月維持 `yyyy-mm-dd` / `yyyy-mm`。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+46 -1)
+>
+> </details>
+>
+> `PivotData` 的排序已改成同一層級內最新期間在前面。接著我改 `ChartData_Day/Week/Month` 的期間清單排序，也讓最新日期列排最上面，圖表來源抓前幾列時會自然抓到最近日期。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+17 -1)
+>
+> </details>
+>
+> 排序已改好。我再修一個細節：`ChartData_Day` 的日期欄若被 Excel 當作日期序號，會影響顯示但不影響排序；為了穩定，我把輸出格式維持可排序文字型日期。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+2 -2)
+>
+> </details>
+>
+> 最後我快速檢查一下 VBA 檔裡新增的排序函式位置與名稱，避免重名或漏掉 `End Function`。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Check VBA sort functions",
+>   "code": "{\n  const fs = await import('node:fs');\n  const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n  const text=fs.readFileSync(file,'utf8');\n  const names=['ReversePeriodKey','PeriodSortNumber','SortPeriodKeysDescending','ApplyChartDataPeriodFormat'];\n  nodeRepl.write(JSON.stringify(Object.fromEntries(names.map(n=>[n,(text.match(new RegExp(n,'g'))||[]).length])),null,2));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> {
+>   "ReversePeriodKey": 3,
+>   "PeriodSortNumber": 9,
+>   "SortPeriodKeysDescending": 2,
+>   "ApplyChartDataPeriodFormat": 2
+> }
+> ```
+</details>
+
+已修改完成，最新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+調整內容：
+
+- `PivotData` 內同一個 `PeriodType` 會依期間由新到舊排序
+- `ChartData_Day` 最新日期放最上面
+- `ChartData_Week` 最新週別放最上面
+- `ChartData_Month` 最新月份放最上面
+- `Period` 欄位改成可排序文字格式：
+  - Day：`yyyy-mm-dd`
+  - Week：`yyyy-Www`，例如 `2026-W24`
+  - Month：`yyyy-mm`
+
+這樣你圖表如果只抓前 N 列，就會自然抓到最近日期/週/月。重新匯入新版 `.bas` 後，執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+> 日 的格式跑掉
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{3356C61D-8BF1-45E9-88D4-916E2DAD9A4F}.png`
+
+<details><summary>11 previous messages</summary>
+
+> 抓到了，這是 Excel 自動把 `yyyy-mm-dd` 轉成日期序號。之前我是在寫完後才改文字格式，太晚了，值已經變成 `46152`。我會改成「寫入前先把 Period 欄設成文字」，並在產生 ChartData 時把日期序號轉回 `yyyy-mm-dd`。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -2)
+>
+> </details>
+>
+> 我再補一個 `NormalizePeriodText` 函式，專門把舊資料裡的 Excel 日期序號轉回可排序文字，日/週/月都會穩定顯示。
+>
+> 補函式時位置對不上，我先看一下排序函式附近的實際內容，再把新函式放在正確位置。
+>
+> <details><summary>Called 2 tools</summary>
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Locate period sort functions",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const start=text.indexOf('Private Function ReversePeriodKey');\n const end=text.indexOf('Private Function IsoWeekKey');\n nodeRepl.write(text.slice(start,end));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+>
+> ```
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Find function names",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const idxs=['ReversePeriodKey','PeriodSortNumber','SortPeriodKeysDescending','IsoWeekKey'].map(n=>[n,text.indexOf(n)]);\n nodeRepl.write(JSON.stringify(idxs,null,2));\n}"
+> }
+> ```
+>
+> ```text
+> [
+>   [
+>     "ReversePeriodKey",
+>     21572
+>   ],
+>   [
+>     "PeriodSortNumber",
+>     20372
+>   ],
+>   [
+>     "SortPeriodKeysDescending",
+>     16962
+>   ],
+>   [
+>     "IsoWeekKey",
+>     8225
+>   ]
+> ]
+> ```
+>
+> </details>
+>
+> 函式順序跟我預期不同，沒關係。我把轉換函式放在 `PeriodSortNumber` 後面，這樣 `BuildChartData` 可以直接呼叫。
+>
+> <details><summary>Called 3 tools</summary>
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Show PeriodSortNumber block",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const start=text.indexOf('Private Function PeriodSortNumber');\n const end=text.indexOf('Private Function ReversePeriodKey');\n nodeRepl.write(text.slice(start,end));\n}"
+> }
+> ```
+>
+> ```text
+>
+> ```
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Show surrounding sort code",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n nodeRepl.write(text.slice(19800,22250));\n}"
+> }
+> ```
+>
+> ```text
+>  As Variant)
+>     Dim i As Long
+>     Dim j As Long
+>     Dim tmp As Variant
+>
+>     For i = LBound(keys) To UBound(keys) - 1
+>         For j = i + 1 To UBound(keys)
+>             If CStr(keys(j)) < CStr(keys(i)) Then
+>                 tmp = keys(i)
+>                 keys(i) = keys(j)
+>                 keys(j) = tmp
+>             End If
+>         Next j
+>     Next i
+> End Sub
+>
+> Private Sub SortPeriodKeysDescending(ByRef keys As Variant)
+>     Dim i As Long
+>     Dim j As Long
+>     Dim tmp As Variant
+>
+>     For i = LBound(keys) To UBound(keys) - 1
+>         For j = i + 1 To UBound(keys)
+>             If PeriodSortNumber(CStr(keys(j))) > PeriodSortNumber(CStr(keys(i))) Then
+>                 tmp = keys(i)
+>                 keys(i) = keys(j)
+>                 keys(j) = tmp
+>             End If
+>         Next j
+>     Next i
+> End Sub
+>
+> Private Function IsoWeekKey(ByVal d As Date) As String
+>     IsoWeekKey = Year(DateAdd("d", 4 - Weekday(d, vbMonday), d)) & "-W" & Format$(WorksheetFunction.IsoWeekNum(d), "00")
+> End Function
+>
+> Private Sub SortKeys(ByRef keys As Variant)
+>     Dim i As Long
+>     Dim j As Long
+>     Dim tmp As Variant
+>
+>     For i = LBound(keys) To UBound(keys) - 1
+>         For j = i + 1 To UBound(keys)
+>             If SortValue(CStr(keys(j))) < SortValue(CStr(keys(i))) Then
+>                 tmp = keys(i)
+>                 keys(i) = keys(j)
+>                 keys(j) = tmp
+>             End If
+>         Next j
+>     Next i
+> End Sub
+>
+> Private Function SortValue(ByVal key As String) As String
+>     Dim parts As Variant
+>     Dim levelOrder As String
+>     Dim reversePeriod As String
+>
+>     parts = Split(key, "|")
+>     Select Case parts(0)
+>         Case "Day": levelOrder = "1"
+>         Case "Week": levelOrder = "2"
+>         Case "Month": levelOrder = "3"
+>         Case Else: levelOrder = "9"
+>     End Select
+>
+>     reversePeriod = ReversePeriodKey(parts(1))
+>     SortValue = levelOrder & "|" & reversePeriod & "|" & parts(2)
+> End Function
+>
+> Private Function ReversePeriodKey(ByVal periodName As String) As String
+>     Dim n As Double
+>
+>     n = PeriodSortNumber(periodName)
+>     ReversePeriodKey = Format$(99999999 - n, "00000000")
+> End Function
+>
+> Private Function PeriodSortNumber(ByVal periodName As String) As Double
+>     Dim parts As Variant
+>     Dim y As Long
+>     Dim m As Long
+>     Dim d As Long
+>     Dim w As Long
+>
+>     periodName = Trim$(periodName)
+>
+>     If InStr(1, periodName, "-W", vbTextCompare) > 0 Then
+>         parts = Split(Replace(periodName, "W", ""), "-")
+>         If UBound(parts) = 1 Then
+>             y =
+> ```
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Show rest periodsort",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n nodeRepl.write(text.slice(22250,23550));\n}"
+> }
+> ```
+>
+> ```text
+>  CLng(ToNumber(CStr(parts(0))))
+>             w = CLng(ToNumber(CStr(parts(1))))
+>             PeriodSortNumber = y * 100 + w
+>             Exit Function
+>         End If
+>     End If
+>
+>     parts = Split(periodName, "-")
+>     If UBound(parts) = 2 Then
+>         y = CLng(ToNumber(CStr(parts(0))))
+>         m = CLng(ToNumber(CStr(parts(1))))
+>         d = CLng(ToNumber(CStr(parts(2))))
+>         PeriodSortNumber = y * 10000 + m * 100 + d
+>     ElseIf UBound(parts) = 1 Then
+>         y = CLng(ToNumber(CStr(parts(0))))
+>         m = CLng(ToNumber(CStr(parts(1))))
+>         PeriodSortNumber = y * 100 + m
+>     ElseIf IsNumeric(periodName) Then
+>         PeriodSortNumber = CDbl(periodName)
+>     Else
+>         PeriodSortNumber = 0
+>     End If
+> End Function
+>
+> Private Sub BuildPivotTable(ByVal wb As Workbook, ByVal dataWs As Worksheet, ByVal pivotWs As Worksheet)
+>     Dim lastRow As Long
+>     Dim sourceRange As Range
+>     Dim pc As PivotCache
+>     Dim pt As PivotTable
+>
+>     lastRow = dataWs.Cells(dataWs.Rows.Count, "A").End(xlUp).Row
+>     If lastRow < 2 Then Err.Raise vbObjectError + 300, , "PivotData has no rows."
+>
+>     Set sourceRange = dataWs.Range("A1:J" & lastRow)
+>     Set pc = wb.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=sourceRange)
+>     Set pt = pc.CreatePivotTable(TableDestination:=pivotWs.Range("A3"), TableName:
+> ```
+>
+> </details>
+>
+> 我找到正確位置了，現在插入轉換函式，並再強化 `PeriodSortNumber`：如果遇到舊的日期序號，也會用真正日期來排序，而不是把 46152 當普通數字。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+39 -1)
+>
+> </details>
+>
+> 再檢查一下 `NormalizePeriodText` 已被 `BuildChartData` 呼叫，並確認沒有重複定義。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Verify NormalizePeriodText references",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const matches=[...text.matchAll(/NormalizePeriodText/g)].map(m=>m.index);\n const snippet=text.slice(text.indexOf('For r = 2 To lastRow', text.indexOf('Private Sub BuildChartData')), text.indexOf('If periodDict.Count', text.indexOf('Private Sub BuildChartData')));\n nodeRepl.write(JSON.stringify({count:matches.length, snippet},null,2));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> {
+>   "count": 9,
+>   "snippet": "For r = 2 To lastRow\n        If CStr(pivotDataWs.Cells(r, 1).Value2) = periodTypeName Then\n            periodName = NormalizePeriodText(pivotDataWs.Cells(r, 2).Value2, periodTypeName)\n            opno = CStr(pivotDataWs.Cells(r, 3).Value2)\n            key = periodName & \"|\" & opno\n\n            If Not periodDict.Exists(periodName) Then periodDict(periodName) = periodName\n            If Not opnoDict.Exists(opno) Then opnoDict(opno) = opno\n\n            valueDict(key) = Array(pivotDataWs.Cells(r, 4).Value2, _\n                                   pivotDataWs.Cells(r, 5).Value2, _\n                                   pivotDataWs.Cells(r, 6).Value2)\n        End If\n    Next r\n\n    "
+> }
+> ```
+</details>
+
+已修正。這次的原因是 Excel 在寫入 `yyyy-mm-dd` 時又自動轉成日期序號，所以 `ChartData_Day` 看到 `46152`。
+
+新版已改成兩層防護：
+
+1. `PivotData` 的 `Period` 欄寫入前先設成文字格式
+2. 產生 `ChartData_Day` 時，如果遇到舊的日期序號，會轉回 `yyyy-mm-dd`
+
+請重新匯入最新版：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+再執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+執行後 `ChartData_Day` 的 `Period` 應該會顯示成：
+
+```text
+2026-05-19
+2026-05-18
+2026-05-17
+```
+
+而且最新日期會在最上面。
+
+> excel圖表可以設定由下往上嗎,  由2026-05-01--->2026-05-10
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{4EE8E2F3-2EBC-47FD-9E45-E9E210C17D9C}.png`
+
+可以。你現在 `ChartData_Day` 是「最新在上」，所以圖表 X 軸會從：
+
+```text
+2026-05-10 → 2026-05-01
+```
+
+如果你想圖表顯示：
+
+```text
+2026-05-01 → 2026-05-10
+```
+
+有兩種做法。
+
+**方法 1：只改圖表座標軸，最快**
+
+1. 點圖表的 X 軸日期
+2. 右鍵 → `座標軸格式`
+3. 找到 `座標軸選項`
+4. 勾選：
+
+```text
+類別次序反轉
+```
+
+或英文版：
+
+```text
+Categories in reverse order
+```
+
+這樣資料表仍然最新在上，但圖表會由舊到新顯示。
+
+**方法 2：新增一張給圖表用的正序資料**
+
+如果你不想每張圖都手動設定，可以讓巨集另外產生：
+
+```text
+ChartData_Day_Chart
+```
+
+這張專門給圖表使用，日期由舊到新：
+
+```text
+2026-05-01
+2026-05-02
+...
+2026-05-10
+```
+
+而 `ChartData_Day` 保持最新在上，方便你人工查看最近資料。
+
+我建議你的情境用：
+
+- `ChartData_Day`：最新在上，方便查看
+- 圖表 X 軸：勾 `類別次序反轉`
+
+這樣不用多一張表，也最簡單。
+
+> 現在有個問題，當選取時間區間未包含所有opno都有生產資料，圖表欄位會shift, 有建議作法嗎
+
+<details><summary>3 previous messages</summary>
+
+> 這個問題通常不是 OPNO 欄真的不見，而是「某些期間沒有資料」時，圖表用空白儲存格或手動選取範圍，Excel 會讓線/柱的對應看起來錯位。最穩的做法是固定每個 OPNO 的欄位位置，沒有生產資料時填 `#N/A` 給良率、`0` 給數量。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -0)
+>
+> </details>
+>
+> 我已把巨集改成缺資料不留空白：良率用 `#N/A`，Excel 圖表會跳過該點；產量用 `0`，柱狀圖位置仍固定。這樣選取不同時間區間時，欄位不會因空白而錯位。
+</details>
+
+建議做法是：**不要讓圖表資料區因為某個 OPNO 沒生產就空白或縮欄**。
+
+我已幫你更新巨集：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+新版規則：
+
+- 每個 OPNO 的欄位固定存在
+- 沒有生產資料時：
+  - `PanelYield` 填 `#N/A`
+  - `DieYield` 填 `#N/A`
+  - `TotalPanels` 填 `0`
+
+這樣 Excel 圖表會：
+
+- 良率線遇到 `#N/A` 自動斷線，不會亂接
+- 柱狀圖維持位置，不會讓後面的 OPNO 往前 shift
+- 每個 OPNO 的欄位位置固定，圖表系列比較穩
+
+圖表設計上也建議：
+
+- 不要用篩選後的可見儲存格直接畫圖
+- 每張圖固定指定該 OPNO 的三欄，例如：
+  - `A5AC004 PanelYield`
+  - `A5AC004 DieYield`
+  - `A5AC004 TotalPanels`
+- 時間區間用列範圍控制，不要改欄位範圍
+
+更新後重新執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+> 因每個檔案opno都有多有少，附圖是完整的表投
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Temp/codex-clipboard-045d8f86-e7c6-46d1-98cf-849c8b9b2b53.png`
+
+<details><summary>3 previous messages</summary>
+
+> 懂，你的核心問題是「每次檔案出現的 OPNO 不固定」，所以如果 ChartData 只依當次資料產生表頭，圖表欄位位置就會變。解法是建立一張固定的 OPNO 清單，之後每次都照這張清單產生欄位，當次沒資料就補 `#N/A` / `0`。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+41 -2)
+>
+> </details>
+>
+> 我已加上 `OPNO_List` 主清單邏輯。第一次執行會自動建立清單，之後你可以在這張表手動調整完整 OPNO 順序；ChartData 日/週/月都會照這張清單固定產生欄位。
+</details>
+
+你這個狀況要用「固定 OPNO 主清單」解。
+
+我已更新巨集：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+新版會多一張：
+
+```text
+OPNO_List
+```
+
+邏輯是：
+
+- 第一次執行時，自動把目前檔案中的 OPNO 加到 `OPNO_List`
+- 之後每次產生 `ChartData_Day / Week / Month`，都依 `OPNO_List` 的完整清單產生欄位
+- 如果某次檔案少了某些 OPNO，欄位仍會保留
+- 沒資料的 OPNO：
+  - 良率填 `#N/A`
+  - 數量填 `0`
+- 如果新檔案出現新的 OPNO，會自動追加到 `OPNO_List`
+
+這樣你的表頭就會固定，不會因為每天檔案 OPNO 多或少而 shift。
+
+建議流程：
+
+1. 重新匯入新版 `.bas`
+2. 執行 `UpdateOPNOYieldDataOnly`
+3. 檢查 `OPNO_List`
+4. 如果你想固定順序，可以在 `OPNO_List` 手動調整 OPNO 排列
+5. 之後所有 `ChartData_*` 都會照這張清單出欄位
+
+這樣最適合你要長期維護很多固定圖表的情境。
+
+> 類別次序反轉，當天數不足，副座標的柱狀圖錯位，有解法嗎
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{D870BD61-627D-466D-AB62-0DC3999D01C4}.png`
+
+<details><summary>3 previous messages</summary>
+
+> 這個錯位我建議不要再靠「類別次序反轉」處理。副座標軸加柱狀圖時，遇到天數不足或空白列，Excel 很容易讓柱與線看起來偏掉。最穩的解法是另外產生「圖表專用、時間由舊到新」的資料頁，圖表不要勾反轉。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+28 -4)
+>
+> </details>
+>
+> 我已讓巨集同時產生兩套資料：原本的 `ChartData_*` 維持最新在上，另外新增 `ChartData_*_Chart` 給圖表用，日期由舊到新。接下來圖表接 `_Chart` 這套，就不用使用類別次序反轉。
+</details>
+
+有解法，而且建議你不要再用「類別次序反轉」。
+
+我已更新巨集，會多產生三張「圖表專用」頁籤：
+
+- `ChartData_Day_Chart`
+- `ChartData_Week_Chart`
+- `ChartData_Month_Chart`
+
+這三張的 `Period` 會由舊到新排列，例如：
+
+```text
+2026-05-06
+2026-05-07
+2026-05-08
+2026-05-09
+2026-05-10
+```
+
+所以你的圖表請改接：
+
+```text
+ChartData_Day_Chart
+```
+
+然後把圖表 X 軸的「類別次序反轉」取消。
+
+保留原本這三張給人工查看，最新仍在最上面：
+
+- `ChartData_Day`
+- `ChartData_Week`
+- `ChartData_Month`
+
+新版檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+這樣副座標柱狀圖和良率線會照同一個 X 軸順序走，比用反轉座標軸穩很多。
+
+> 請復原，我要同步滿足資料大於圖表與小於圖表，先前做法已滿足大於圖表
+
+<details><summary>9 previous messages</summary>
+
+> 了解，先把剛剛新增的 `_Chart` 圖表專用頁籤做法復原，回到先前 `ChartData_Day/Week/Month` 最新在上、搭配圖表類別反轉的版本。接著我們再針對「資料天數小於圖表範圍」單獨處理，不破壞你已經滿足的「資料大於圖表範圍」。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -28)
+>
+> </details>
+>
+> 復原已完成。為了同時滿足兩種情境，我會保留「最新在上」給圖表固定抓前 N 列；另外補一個機制：當資料筆數少於圖表範圍時，自動往下補足期間列，良率填 `#N/A`、數量填 `0`，這樣柱狀圖和線圖不會因空白列錯位。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -0)
+>
+> </details>
+>
+> 我先設定預設補足列數：日 10、週 12、月 12。這些數字你之後可以依圖表固定抓幾列調整。接著把補足邏輯加進 ChartData 產生流程。
+>
+> 補丁位置跟檔案目前順序有點差異，我先抓 `BuildChartData` 附近內容，再精準插入。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect BuildChartData section",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const start=text.indexOf('Private Sub BuildChartData');\n const end=text.indexOf('Private Function GetMasterOpnoList');\n nodeRepl.write(text.slice(start,end));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> Private Sub BuildChartData(ByVal wb As Workbook, ByVal pivotDataWs As Worksheet, ByVal periodTypeName As String)
+>     Dim chartWs As Worksheet
+>     Dim periodDict As Object
+>     Dim opnoDict As Object
+>     Dim valueDict As Object
+>     Dim lastRow As Long
+>     Dim r As Long
+>     Dim periodName As String
+>     Dim opno As String
+>     Dim key As String
+>     Dim periods As Variant
+>     Dim opnos As Variant
+>     Dim rowNo As Long
+>     Dim colNo As Long
+>     Dim arr As Variant
+>
+>     Set chartWs = EnsureSheet(wb, "ChartData_" & periodTypeName)
+>     chartWs.Cells.Clear
+>     chartWs.Columns("A").NumberFormat = "@"
+>
+>     Set periodDict = CreateObject("Scripting.Dictionary")
+>     Set opnoDict = CreateObject("Scripting.Dictionary")
+>     Set valueDict = CreateObject("Scripting.Dictionary")
+>
+>     lastRow = pivotDataWs.Cells(pivotDataWs.Rows.Count, "A").End(xlUp).Row
+>
+>     For r = 2 To lastRow
+>         If CStr(pivotDataWs.Cells(r, 1).Value2) = periodTypeName Then
+>             periodName = NormalizePeriodText(pivotDataWs.Cells(r, 2).Value2, periodTypeName)
+>             opno = CStr(pivotDataWs.Cells(r, 3).Value2)
+>             key = periodName & "|" & opno
+>
+>             If Not periodDict.Exists(periodName) Then periodDict(periodName) = periodName
+>             If Not opnoDict.Exists(opno) Then opnoDict(opno) = opno
+>
+>             valueDict(key) = Array(pivotDataWs.Cells(r, 4).Value2, _
+>                                    pivotDataWs.Cells(r, 5).Value2, _
+>                                    pivotDataWs.Cells(r, 6).Value2)
+>         End If
+>     Next r
+>
+>     If periodDict.Count = 0 Or opnoDict.Count = 0 Then Exit Sub
+>
+>     periods = periodDict.Keys
+>     opnos = GetMasterOpnoList(wb, opnoDict)
+>     SortPeriodKeysDescending periods
+>
+>     chartWs.Cells(1, 1).Value = "Period"
+>     colNo = 2
+>     For r = LBound(opnos) To UBound(opnos)
+>         chartWs.Cells(1, colNo).Value = CStr(opnos(r)) & " PanelYield"
+>         chartWs.Cells(1, colNo + 1).Value = CStr(opnos(r)) & " DieYield"
+>         chartWs.Cells(1, colNo + 2).Value = CStr(opnos(r)) & " TotalPanels"
+>         colNo = colNo + 3
+>     Next r
+>
+>     rowNo = 2
+>     For r = LBound(periods) To UBound(periods)
+>         chartWs.Cells(rowNo, 1).Value = CStr(periods(r))
+>         colNo = 2
+>         For Each arr In opnos
+>             key = CStr(periods(r)) & "|" & CStr(arr)
+>             If valueDict.Exists(key) Then
+>                 chartWs.Cells(rowNo, colNo).Value = valueDict(key)(0)
+>                 chartWs.Cells(rowNo, colNo + 1).Value = valueDict(key)(1)
+>                 chartWs.Cells(rowNo, colNo + 2).Value = valueDict(key)(2)
+>             Else
+>                 chartWs.Cells(rowNo, colNo).Value = CVErr(xlErrNA)
+>                 chartWs.Cells(rowNo, colNo + 1).Value = CVErr(xlErrNA)
+>                 chartWs.Cells(rowNo, colNo + 2).Value = 0
+>             End If
+>             colNo = colNo + 3
+>         Next arr
+>         rowNo = rowNo + 1
+>     Next r
+>
+>     chartWs.Rows(1).Font.Bold = True
+>     chartWs.Rows(1).Interior.Color = RGB(217, 234, 247)
+>     For colNo = 2 To chartWs.Cells(1, chartWs.Columns.Count).End(xlToLeft).Column Step 3
+>         chartWs.Range(chartWs.Cells(2, colNo), chartWs.Cells(rowNo - 1, colNo + 1)).NumberFormat = "0.0000%"
+>         chartWs.Range(chartWs.Cells(2, colNo + 2), chartWs.Cells(rowNo - 1, colNo + 2)).NumberFormat = "#,##0"
+>     Next colNo
+>     ApplyChartDataPeriodFormat chartWs, periodTypeName, rowNo - 1
+>     chartWs.Columns.AutoFit
+>
+>     CreateOrResizeChartDataTable chartWs, rowNo - 1, colNo - 1, "tblChartData" & periodTypeName
+> End Sub
+>
+> Private Sub ApplyChartDataPeriodFormat(ByVal ws As Worksheet, ByVal periodTypeName As String, ByVal lastDataRow As Long)
+>     If lastDataRow < 2 Then Exit Sub
+>
+>     Select Case periodTypeName
+>         Case "Day"
+>             ws.Range("A2:A" & lastDataRow).NumberFormat = "@"
+>         Case "Week"
+>             ws.Range("A2:A" & lastDataRow).NumberFormat = "@"
+>         Case "Month"
+>             ws.Range("A2:A" & lastDataRow).NumberFormat = "@"
+>         Case Else
+>             ws.Range("A2:A" & lastDataRow).NumberFormat = "@"
+>     End Select
+> End Sub
+> ```
+>
+> 找到位置了。現在把「補足固定圖表列數」接在資料寫完後、格式套用前。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+84 -0)
+>
+> </details>
+</details>
+
+已復原剛剛 `_Chart` 分頁的做法，回到先前：
+
+- `ChartData_Day`
+- `ChartData_Week`
+- `ChartData_Month`
+
+維持「最新在上」，讓圖表固定抓前 N 列時可以滿足「資料大於圖表範圍」。
+
+同時我新增了「資料小於圖表範圍」的補足機制：
+
+- Day 少於 10 列時，自動補到 10 列
+- Week 少於 12 列時，自動補到 12 列
+- Month 少於 12 列時，自動補到 12 列
+- 補足列：
+  - Period 會往更舊日期/週/月補
+  - 良率填 `#N/A`
+  - TotalPanels 填 `0`
+
+這樣你的圖表固定抓 10 天時：
+
+- 如果資料超過 10 天：抓最新 10 天
+- 如果資料少於 10 天：自動補足 10 列，不會錯位
+
+新版檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+若你的日圖不是抓 10 列，可以改檔案最上方這三個數字：
+
+```vb
+Private Const MIN_DAY_CHART_ROWS As Long = 10
+Private Const MIN_WEEK_CHART_ROWS As Long = 12
+Private Const MIN_MONTH_CHART_ROWS As Long = 12
+```
+
+> 請復原不要補足機制，我先嘗試確認圖表設定
+
+<details><summary>2 previous messages</summary>
+
+> 好，先把補足機制完全復原，回到「只輸出實際有資料的期間列」。你先用圖表設定測試，這樣變因比較少。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+0 -88)
+>
+> </details>
+</details>
+
+已復原補足機制。新版巨集現在只輸出實際有資料的期間列，不會再自動補 Day 10 列、Week 12 列、Month 12 列。
+
+檔案已更新：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+你可以先重新匯入後執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+然後專心測圖表設定。建議先檢查圖表的「選取資料」範圍是否每個系列都抓同一段 Period 列，這通常是副軸柱狀圖錯位的關鍵。
+
+> 先不改vba, 先探討為何副座標無法連動
+
+可以，先不動 VBA。你這個現象多半不是「副座標軸不能連動」，而是 **Excel 圖表裡不同系列的 X 軸類別範圍沒有完全一致**，所以看起來副座標柱狀圖錯位。
+
+Excel 的主座標 / 副座標其實只影響 Y 軸刻度，不應該影響 X 軸位置。
+如果柱狀圖跟折線圖 X 位置不一致，通常是下面幾個原因。
+
+**最常見原因 1：系列範圍不同**
+
+例如折線圖抓：
+
+```text
+Period: A2:A6
+PanelYield: K2:K6
+DieYield: L2:L6
+```
+
+但柱狀圖抓：
+
+```text
+TotalPanels: M2:M10
+```
+
+這樣 Excel 會用不同長度的資料去對應類別，柱就會錯位。
+
+每個系列都要是同一段列，例如都抓 5 列：
+
+```text
+X 軸：A2:A6
+PanelYield：K2:K6
+DieYield：L2:L6
+TotalPanels：M2:M6
+```
+
+**最常見原因 2：空白列或 #N/A 處理不同**
+
+良率線如果遇到 `#N/A`，Excel 會跳過該點。
+柱狀圖如果是空白或 0，Excel 仍可能畫出類別位置。
+
+所以看起來會像：
+
+- 線圖只畫有值的日期
+- 柱狀圖仍佔所有日期位置
+- 兩者視覺上不同步
+
+這不是副座標問題，是不同系列對空值的處理方式不同。
+
+**最常見原因 3：使用了「類別次序反轉」**
+
+你目前資料是最新在上：
+
+```text
+2026-05-10
+2026-05-09
+2026-05-08
+...
+```
+
+然後用類別次序反轉讓圖表顯示舊到新。
+
+這在單純折線圖通常沒問題，但組合圖加副軸柱狀時，有時會讓柱圖視覺位置跟資料點感覺不一致，尤其資料範圍不是滿列或有空值時。
+
+**最常見原因 4：柱狀圖在副座標軸後，Excel 產生第二組類別設定**
+
+有些 Excel 版本在組合圖中，副軸系列會有自己的繪圖邏輯。雖然 X 軸看起來同一個，但當資料列數、空白處理、反轉方向不同時，副軸柱圖容易看起來「沒有跟線共用同一個 X 軸」。
+
+**你可以先這樣檢查**
+
+右鍵圖表 → `選取資料`
+
+逐一點三個系列：
+
+- `A5AC004 PanelYield`
+- `A5AC004 DieYield`
+- `A5AC004 TotalPanels`
+
+確認每個系列的列範圍完全一致。
+
+例如都應該是：
+
+```text
+A5AC004 PanelYield = ChartData_Day!$K$2:$K$6
+A5AC004 DieYield   = ChartData_Day!$L$2:$L$6
+A5AC004 TotalPanels = ChartData_Day!$M$2:$M$6
+X軸標籤             = ChartData_Day!$A$2:$A$6
+```
+
+不要讓 TotalPanels 抓到 `M2:M10`，而良率只抓 `K2:K6`。
+
+**我的判斷**
+
+你的副座標柱狀圖錯位，最大可能是：
+
+```text
+TotalPanels 系列範圍筆數 ≠ PanelYield / DieYield 系列範圍筆數
+```
+
+或是圖表還保留了舊範圍，當資料天數變少時，折線系列變短，但柱狀系列還抓舊的多列。
+
+所以重點不是副座標不能連動，而是要讓所有系列：
+
+```text
+同一個 Period 範圍
+同一個起始列
+同一個結束列
+同一個空值處理方式
+```
+
+你可以先從 `選取資料` 裡檢查這三個系列範圍，通常一看就會找到哪一條範圍不一致。
+
+> 我使用了「類別次序反轉」
+
+那就很可能是它造成的。
+
+`類別次序反轉` 在單純折線圖通常沒問題，但在你的圖這種：
+
+- 折線圖：`PanelYield / DieYield`
+- 柱狀圖：`TotalPanels`
+- 柱狀圖放副座標軸
+- 資料列有時不足固定圖表範圍
+- 有些 OPNO 某些日期沒有資料
+
+這幾個條件疊在一起時，Excel 很容易讓柱狀圖看起來沒有跟折線圖同步。
+
+**為什麼會這樣**
+
+你的資料表是最新在上：
+
+```text
+2026-05-10
+2026-05-09
+2026-05-08
+2026-05-07
+2026-05-06
+```
+
+你勾 `類別次序反轉` 後，X 軸顯示變成：
+
+```text
+2026-05-06
+2026-05-07
+2026-05-08
+2026-05-09
+2026-05-10
+```
+
+但組合圖裡的柱狀系列、折線系列、資料標籤、副座標軸，有時不會用完全一致的方式處理這個反轉，尤其當系列範圍長度不同或有空白值時，就會出現錯位感。
+
+**比較穩的圖表設定**
+
+如果你先不改 VBA，可以這樣試：
+
+1. 不要勾 `類別次序反轉`
+2. 在 `ChartData_Day` 旁邊手動做一塊圖表用資料區
+3. 用公式把最新 N 天反向排列成舊到新
+4. 圖表接這塊資料區
+
+例如原始是：
+
+```text
+A2:A11 = 2026-05-10 到 2026-05-01
+```
+
+旁邊做：
+
+```text
+AA2:AA11 = 2026-05-01 到 2026-05-10
+```
+
+公式可以用：
+
+```excel
+=INDEX($A$2:$A$11, ROWS($A$2:$A$11)-ROW(A1)+1)
+```
+
+對數值欄也同樣反向抓。
+
+這樣圖表本身不用反轉，副座標柱狀圖會穩很多。
+
+**如果只靠設定**
+
+你可以先檢查三件事：
+
+1. `PanelYield`、`DieYield`、`TotalPanels` 三個系列範圍列數完全一致
+2. `選取資料 > 隱藏和空白儲存格` 裡，空白儲存格不要用「連接資料點」
+3. X 軸取消 `類別次序反轉` 測試一次
+
+如果取消反轉後柱狀圖正常，幾乎就可以確認問題是 `類別次序反轉 + 組合圖副軸` 的 Excel 行為。
+
+**我的建議**
+
+長期最穩的是：
+
+- `ChartData_Day` 保持最新在上，方便你看資料
+- 另外做一塊「圖表專用反向資料區」
+- 圖表接反向資料區
+- 圖表不要使用 `類別次序反轉`
+
+這樣可以同時滿足：
+
+- 資料大於圖表範圍：抓最新 N 筆
+- 圖表顯示：由舊到新
+- 副座標柱狀圖：不錯位
+
+> 有無哪裡可以修改設定 類別次序反轉 後產生連動
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{4A6A6155-9ED1-458B-AD8B-89025212E28C}.png`
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{EAA8530E-7B81-4877-BFD0-213A9263FF09}.png`
+
+有，這個可以從 Excel 設定處理。你的狀況很像是 **主水平軸有反轉，但副座標系列其實吃的是「副水平軸」**，只是副水平軸通常被隱藏，所以看起來沒有連動。
+
+請試這個：
+
+**步驟**
+
+1. 點選圖表
+2. 到功能區：
+
+```text
+圖表設計 > 新增圖表項目 > 座標軸 > 次要水平座標軸
+```
+
+3. 圖表上方應該會出現一條新的 X 軸
+4. 點選這條「次要水平座標軸」
+5. 右鍵 → `座標軸格式`
+6. 勾選：
+
+```text
+類別次序反轉
+```
+
+7. 如果不想看到上方軸標籤，把它設成：
+
+```text
+標籤位置：無
+```
+
+重點是：**主水平軸和次要水平軸都要反轉**。
+
+你目前看到的現象大概是：
+
+- 折線圖吃主水平軸
+- 柱狀圖或副座標系列吃次要水平軸
+- 你只反轉了其中一個
+- 所以線跟柱沒有同步
+
+另外也檢查一下：
+
+```text
+座標軸位置：刻度與刻度之間
+```
+
+主水平軸和次要水平軸最好一致。
+
+如果設定後還怪，另一個做法是把 `TotalPanels` 系列選起來，右鍵 `設定資料數列格式`，確認它到底是放在主座標軸還是副座標軸。通常只要讓兩條水平軸的「類別次序反轉」設定一致，就會連動。
+
+> 快完成了 剩下讓柱狀圖由下往上長
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{30ABD860-063E-4DE1-A9FF-193F81DE568F}.png`
+
+快好了，這個是 **副垂直座標軸反轉/交叉位置** 造成的。柱狀圖現在是從上往下長，代表 `TotalPanels` 使用的那條垂直軸方向被反了，或水平軸交叉在最大值。
+
+請這樣調：
+
+1. 點右邊的副垂直座標軸，也就是 `TotalPanels` 那個 0~80 的軸
+   如果右邊軸沒顯示，先開：
+
+```text
+圖表設計 > 新增圖表項目 > 座標軸 > 次要垂直座標軸
+```
+
+2. 右鍵 → `座標軸格式`
+
+3. 找到 `座標軸選項`
+
+4. 確認不要勾：
+
+```text
+數值次序反轉
+```
+
+5. 找到：
+
+```text
+水平軸交叉
+```
+
+請選：
+
+```text
+座標軸值：0
+```
+
+或：
+
+```text
+自動
+```
+
+不要選：
+
+```text
+最大座標軸值
+```
+
+這樣柱狀圖就會從底部往上長。
+
+如果還是反的，再檢查左邊主垂直軸也一樣：
+
+- 不要勾 `數值次序反轉`
+- 水平軸交叉設 `自動` 或 `0`
+
+你的狀況最可能是副垂直軸的「水平軸交叉於最大值」導致柱狀圖從上往下。
+
+> 有機會移動選取範圍時，圖表格式不要變嗎
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{7639EAD9-C9F1-4FB2-9E53-7D54D2AEC1CC}.png`
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{6BDEC2FE-B426-45F3-BCDC-229AA07BEAD9}.png`
+
+可以，而且你現在遇到的是 Excel 的典型行為：**移動圖表資料範圍後，Excel 會重新套用系列設定**，尤其是你從 `A5TC001` 移到 `A5SC002`，它可能把：
+
+- 顏色
+- 主/副座標軸
+- 圖表類型
+- 資料標籤
+- 座標軸刻度
+
+重新判斷一次，所以格式跑掉。
+
+最有效率的做法有三種。
+
+**方法 1：先存成圖表範本，最簡單**
+
+調好一張標準圖後：
+
+1. 右鍵圖表
+2. `另存為範本`
+3. 存成例如：
+
+```text
+YieldCombo.crtx
+```
+
+之後每次圖表格式跑掉：
+
+1. 右鍵圖表
+2. `變更圖表類型`
+3. `範本`
+4. 選 `YieldCombo`
+
+這會把圖表類型、顏色、副軸、線條等格式拉回來。
+
+**方法 2：複製已完成圖表，再只改資料來源**
+
+這比重新建圖穩：
+
+1. 先完成一張 `A5TC001` 圖
+2. 複製整張圖
+3. 貼到旁邊
+4. 右鍵圖表 → `選取資料`
+5. 只改三個系列的值範圍：
+   - `TotalPanels`
+   - `PanelYield`
+   - `DieYield`
+6. 不要重新插入圖表
+
+這樣格式通常能保留 80% 以上。
+
+**方法 3：用輔助資料區，圖表永遠不改來源，最穩**
+
+這是最推薦的長期方式。
+
+建立一塊固定圖表資料區，例如：
+
+| Period | TotalPanels | PanelYield | DieYield |
+|---|---:|---:|---:|
+| 2026-W10 | 20 | 87.71% | 99.71% |
+| 2026-W11 | 30 | 93.55% | 99.94% |
+
+圖表永遠吃這四欄。
+你要換 OPNO 時，只改這塊資料區的公式，不改圖表本身。
+
+例如在某個儲存格放 OPNO：
+
+```text
+B1 = A5SC002
+```
+
+資料區公式用 `XLOOKUP` 或 `INDEX/MATCH` 去抓：
+
+```excel
+=XLOOKUP($B$1 & " TotalPanels", ChartData_Week!$1:$1, ChartData_Week!$2:$20)
+```
+
+這樣圖表的來源範圍永遠不變，所以格式完全不會跑。
+
+**我的建議**
+
+你現在如果是在手動大量做圖：
+
+- 短期：用 **方法 1 + 方法 2**
+- 長期：做 **方法 3**
+
+也就是：
+
+```text
+ChartData_Week
+        ↓
+固定輔助資料區
+        ↓
+固定圖表
+```
+
+你不要一直移動圖表選取範圍。
+一移動，Excel 就可能重算圖表系列，格式就會變。
+
+最穩的一句話是：
+
+**圖表來源範圍固定，讓公式去換資料，不要讓圖表本身換範圍。**
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{FD231D46-19B1-4E1B-BD86-A0C30CF1BB39}.png`
+
+這個畫面表示 `.crtx` 圖表範本可能沒有存成功，或 Excel 覺得這個範本不適用目前圖表類型，所以顯示：
+
+```text
+無法套用此範本。範本可能損毀或不適用於...
+```
+
+你可以先試這幾個檢查。
+
+**1. 用「另存為範本」重新存一次**
+
+不要直接複製檔案。請用：
+
+1. 點選已調好的圖表
+2. 右鍵圖表外框
+3. `另存為範本...`
+4. 存成新名字，例如：
+
+```text
+YieldCombo_v2.crtx
+```
+
+然後再套用這個新版。
+
+**2. 先確認圖表類型一致**
+
+如果你的範本是「組合圖」：
+
+- `TotalPanels`：直條圖，副座標軸
+- `PanelYield`：折線圖
+- `DieYield`：散佈點或折線/標記
+
+那要套用的圖表最好也先有三個系列。
+如果目標圖只有一個系列，Excel 有時會說範本不適用。
+
+**3. 不建議靠範本做大量圖**
+
+你現在這種圖有：
+
+- 主軸百分比
+- 副軸數量
+- 直條 + 折線 + 點
+- 資料標籤
+- 類別反轉
+- 多個 OPNO
+
+`.crtx` 很容易不穩。
+我會比較建議你用「複製已調好的圖表」方式：
+
+1. 調好一張標準圖
+2. 複製整張圖
+3. 貼到下一個位置
+4. 只改資料來源系列範圍
+
+這通常比套範本穩。
+
+**最穩方案**
+
+做固定輔助資料區，讓圖表來源永遠不變。
+例如每張圖固定吃：
+
+```text
+DashboardData_A5SC002!A:D
+```
+
+或某個固定區塊：
+
+```text
+Dashboard!AA1:AD11
+```
+
+之後只更新這個區塊的資料，不改圖表來源，圖表格式就不會跑。
+
+結論：
+`.crtx` 可以試，但你這類組合圖不太可靠。大量固定圖表我會改用「複製標準圖 + 固定輔助資料區」比較穩。
+
+> 有沒有excel設定值可以改
+
+有幾個 Excel 設定可以調，但我要先講結論：**沒有一個全域設定可以保證「改資料範圍後圖表格式完全不變」**。不過下面這些設定可以降低格式跑掉的機率。
+
+**1. 關閉自動套用新格式**
+
+到：
+
+```text
+檔案 > 選項 > 進階
+```
+
+找到圖表相關設定，取消勾選類似這個選項：
+
+```text
+內容變更時自動擴充資料範圍格式與公式
+```
+
+英文可能是：
+
+```text
+Extend data range formats and formulas
+```
+
+這比較偏資料表/範圍格式，不一定完全解決圖表系列格式，但可以減少 Excel 自動判斷。
+
+**2. 圖表不要使用「切換列/欄」後再改範圍**
+
+如果曾按過：
+
+```text
+圖表設計 > 切換列/欄
+```
+
+Excel 很容易在你移動範圍時重判斷系列。
+建議固定一種方向：
+
+- X 軸：`Period`
+- 系列：各欄位，例如 `TotalPanels / PanelYield / DieYield`
+
+不要頻繁切換。
+
+**3. 使用「選取資料」逐一改系列，不要拖曳彩色框**
+
+你現在用拖曳彩色框移動範圍，Excel 最容易重套格式。
+
+比較穩的是：
+
+```text
+右鍵圖表 > 選取資料 > 編輯系列
+```
+
+逐一改：
+
+- 系列名稱
+- 系列值
+- 水平軸標籤
+
+不要用滑鼠拖整個彩色框。
+
+**4. 鎖定圖表類型與座標軸**
+
+改完資料來源後，馬上確認：
+
+```text
+圖表設計 > 變更圖表類型 > 組合圖
+```
+
+設定：
+
+| 系列 | 類型 | 座標軸 |
+|---|---|---|
+| TotalPanels | 群組直條圖 | 副座標軸 |
+| PanelYield | 折線圖 | 主座標軸 |
+| DieYield | 折線圖或只有標記 | 主座標軸 |
+
+這是目前最接近「固定格式」的手動設定。
+
+**5. 檢查資料標籤與空白資料設定**
+
+右鍵圖表 → `選取資料` → `隱藏和空白儲存格`
+
+建議：
+
+```text
+空白儲存格顯示為：空距
+```
+
+不要選「以零值顯示」，否則柱圖/線圖看起來更容易怪。
+
+**最實際建議**
+
+如果你問的是「有沒有像設定開關一樣，讓我移動範圍但圖表格式不變」：
+
+```text
+沒有可靠的 Excel 設定
+```
+
+最接近的做法是：
+
+- 不要拖曳彩色框
+- 用 `選取資料 > 編輯系列`
+- 或複製標準圖後，只改每個系列的公式
+
+例如系列公式長這樣：
+
+```excel
+=SERIES("A5SC002 PanelYield",ChartData_Week!$A$2:$A$11,ChartData_Week!$AL$2:$AL$11,2)
+```
+
+只改欄位 `$AL$2:$AL$11`，不要重建系列。這樣格式最不容易跑。
+
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{413B1963-9274-435D-990B-3CDB767DB737}.png`
+
+你截圖這裡是 Excel 的圖表選項，這幾個設定主要是「顯示提示」和「圖表跟資料點的格式追蹤」，不是鎖住圖表格式的開關。
+
+我建議這樣設：
+
+**保留勾選**
+
+```text
+停留時顯示圖表項目名稱
+停留時顯示資料點的值
+```
+
+這兩個只是滑鼠提示，不影響圖表格式。
+
+**可以取消勾選**
+
+```text
+所有新活頁簿的屬性追蹤圖表資料點
+目前活頁簿的屬性追蹤圖表資料點
+```
+
+尤其是這個：
+
+```text
+目前活頁簿的屬性追蹤圖表資料點
+```
+
+可以先取消。它的意思是 Excel 會記住/追蹤個別資料點的格式，當資料來源變動時，有時反而會讓格式行為變複雜。
+
+但要注意：取消這個**不等於**移動資料範圍時圖表格式一定不變。它只是降低 Excel 對個別資料點格式追蹤的干擾。
+
+你現在最容易導致格式跑掉的動作還是：
+
+```text
+拖曳彩色資料範圍框
+```
+
+建議改成：
+
+```text
+右鍵圖表 > 選取資料 > 編輯系列
+```
+
+逐一改系列範圍，格式比較不會被 Excel 重判。
+
+> 目前活頁簿的屬性追蹤圖表資料點 勾除後ok  , 勾除後有其他可能缺點嗎
+
+有，但通常對你這種「每天更新資料、固定報告圖表」來說，**取消勾選反而比較適合**。
+
+`目前活頁簿的屬性追蹤圖表資料點` 的作用是：Excel 會記住個別資料點的格式。例如你手動把某一天的柱子改成紅色、某一個點加粗，資料更新或範圍變動後，它嘗試追蹤那個資料點。
+
+取消後的可能缺點：
+
+- 如果你有手動格式化「單一資料點」，例如只把 `2026-05-10` 的柱子改紅，更新資料後可能不會跟著保留
+- 如果你特別標示某個異常點，資料範圍改變後，Excel 不一定會追蹤那個點
+- 個別資料標籤、單點顏色、單點線條等細部格式比較不會被 Excel 記住
+
+但優點是：
+
+- 移動/更新資料範圍時，圖表比較不會亂套格式
+- 組合圖、副座標軸、系列格式比較穩
+- 適合你這種每天重新產生資料、圖表要維持固定格式的報告
+
+所以我的建議是：**可以保持取消勾選**。
+之後如果要標異常點，建議不要手動改單一點，而是另外加一個「異常標記系列」來畫，會比靠 Excel 追蹤單點格式穩。
+
+> PanelYield 要改成只呈現2位數哪裡修改
+
+在 VBA 這個檔案裡改：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+找這兩段格式設定。
+
+**1. PivotData 的良率格式**
+
+目前應該是：
+
+```vb
+ws.Columns("D:E").NumberFormat = "0.0000%"
+```
+
+改成：
+
+```vb
+ws.Columns("D:E").NumberFormat = "0.00%"
+```
+
+**2. ChartData 的良率格式**
+
+目前應該是：
+
+```vb
+chartWs.Range(chartWs.Cells(2, colNo), chartWs.Cells(rowNo - 1, colNo + 1)).NumberFormat = "0.0000%"
+```
+
+改成：
+
+```vb
+chartWs.Range(chartWs.Cells(2, colNo), chartWs.Cells(rowNo - 1, colNo + 1)).NumberFormat = "0.00%"
+```
+
+這樣 `PanelYield` 和 `DieYield` 都會顯示成小數 2 位，例如：
+
+```text
+94.83%
+99.99%
+```
+
+如果你只想改 `PanelYield`，不改 `DieYield`，我也可以幫你拆開格式。
+
+> 只想改 PanelYield，不改 DieYield 直接更新檔案
+
+<details><summary>2 previous messages</summary>
+
+> 好，我直接改 VBA 檔：`PanelYield` 顯示 2 位小數，`DieYield` 保持 4 位小數。只動格式，不改計算值。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+4 -2)
+>
+> </details>
+</details>
+
+已更新檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+修改內容：
+
+- `PanelYield` 顯示改成 `0.00%`
+- `DieYield` 維持 `0.0000%`
+- `PivotData` 和 `ChartData_Day / Week / Month` 都已同步調整
+
+重新匯入 `.bas` 後執行 `UpdateOPNOYieldDataOnly` 即可套用。
+
+> die yield 都是99.99xx 有更顯著的呈現方式嗎
+
+有。`DieYield` 都在 `99.99xx%` 時，用一般 0~100% 軸幾乎看不出差異。建議改成看 **DPPM / ppm loss**，會顯著很多。
+
+最推薦：
+
+```text
+Die Loss ppm = (1 - DieYield) * 1,000,000
+```
+
+例如：
+
+| DieYield | Die Loss ppm |
+|---:|---:|
+| 99.9990% | 10 ppm |
+| 99.9980% | 20 ppm |
+| 99.9950% | 50 ppm |
+
+這樣差異會很清楚。
+
+圖表建議：
+
+- `PanelYield`：折線圖，百分比
+- `TotalPanels`：柱狀圖，副軸
+- `Die Loss ppm`：另一張小圖，或同圖用紅色折線副軸
+
+不太建議把 `DieYield` 直接跟 `PanelYield` 放同一個 0~100% 軸，因為它太接近 100%。
+
+另一個可行方式是把 DieYield 軸縮窄：
+
+```text
+最小值：99.9900%
+最大值：100.0000%
+```
+
+但這會讓圖看起來波動很大，容易被誤解。
+所以我會建議報告中顯示：
+
+```text
+DieYield = 99.9985%
+Die Loss = 15 ppm
+```
+
+圖表則畫 `Die Loss ppm`，最直覺。
+
+> 不行要跟PanelYield同一個軸，改文字顯現方式。不以圖波動來看而是用資料標籤格式來看
+
+可以，這種情境建議 **圖上仍然畫 DieYield 原值，跟 PanelYield 同一個軸；但資料標籤改成更有辨識度的文字**。
+
+最推薦做法是用「資料標籤來自儲存格」。
+
+**做法**
+
+在 `ChartData_Day / Week / Month` 旁邊新增一欄 DieYield 標籤，例如：
+
+```text
+A5TC001 DieYield Label
+```
+
+公式可以做成這樣：
+
+```excel
+=TEXT([@[A5TC001 DieYield]],"0.0000%")
+```
+
+如果想更顯著，可以顯示離 100% 差多少：
+
+```excel
+=TEXT([@[A5TC001 DieYield]],"0.0000%") & " / Loss " & TEXT((1-[@[A5TC001 DieYield]])*1000000,"0") & "ppm"
+```
+
+顯示效果：
+
+```text
+99.9985% / Loss 15ppm
+```
+
+或更短：
+
+```excel
+="Loss " & TEXT((1-[@[A5TC001 DieYield]])*1000000,"0") & "ppm"
+```
+
+顯示效果：
+
+```text
+Loss 15ppm
+```
+
+**套到圖表**
+
+1. 點選 `DieYield` 那條線或資料點
+2. 右鍵 → `新增資料標籤`
+3. 右鍵資料標籤 → `設定資料標籤格式`
+4. 勾選：
+
+```text
+儲存格中的值
+```
+
+5. 選剛剛做的 `DieYield Label` 範圍
+6. 取消勾選：
+
+```text
+值
+```
+
+這樣圖表仍然用 `DieYield` 原始數值畫在同一個 Y 軸，但標籤可以顯示更有意義的文字。
+
+我的建議標籤格式是：
+
+```text
+99.9985%
+Loss 15ppm
+```
+
+如果報告空間小，就用：
+
+```text
+15ppm
+```
+
+這樣不改圖表軸、不改波動，只是讓 DieYield 的差異用標籤看得出來。
+
+> 有內建呈現方式可以變更嗎, 在圖表功能內設定
+
+有，但內建能做的範圍有限。你如果只想在圖表功能內設定、不新增輔助欄，主要有這幾種。
+
+**方法 1：資料標籤數字格式改成 4 或 5 位小數**
+
+點 `DieYield` 資料標籤 → 右鍵 → `設定資料標籤格式` → `數字`
+
+格式代碼改成：
+
+```text
+0.0000%
+```
+
+或更明顯：
+
+```text
+0.00000%
+```
+
+例如：
+
+```text
+99.99850%
+```
+
+這是最直接的內建方法。
+
+**方法 2：自訂格式加文字**
+
+同一個地方，格式代碼可以改成：
+
+```text
+0.0000%" DY"
+```
+
+會顯示：
+
+```text
+99.9985% DY
+```
+
+或：
+
+```text
+"DY "0.0000%
+```
+
+會顯示：
+
+```text
+DY 99.9985%
+```
+
+**方法 3：只顯示資料標籤，不顯示線條波動**
+
+如果 DieYield 線條本身視覺上沒意義，可以：
+
+1. 點 DieYield 線
+2. `設定資料數列格式`
+3. 線條設成很淡或無線條
+4. 標記保留
+5. 資料標籤顯示 4~5 位
+
+這樣 DieYield 主要靠標籤讀值，不靠線條波動。
+
+**方法 4：調整資料標籤位置**
+
+資料標籤位置改成：
+
+```text
+上方
+```
+
+或：
+
+```text
+置中
+```
+
+並把字體顏色改成橘色、縮小字體。這能讓 DieYield 標籤比較像「標註值」。
+
+**內建不能直接做到的**
+
+Excel 圖表內建數字格式不能直接把 `99.9985%` 顯示成：
+
+```text
+Loss 15ppm
+```
+
+因為那需要計算 `1 - DieYield`，必須用輔助欄或 VBA。
+
+所以如果只用圖表內建設定，我建議：
+
+```text
+DieYield 資料標籤格式：0.00000%
+PanelYield 資料標籤格式：0.00%
+```
+
+這樣兩者都在同一軸，但 DieYield 的細微差異會透過標籤看得出來。
+
+> 這邊有甚麼可以用的嗎
+>
+> User context
+>
+> Images:
+> - `~/AppData/Local/Packages/MicrosoftWindows.Client.Core_cw5n1h2txyewy/TempState/ScreenClip/{66802BF4-6431-48C0-836B-9218FD431CD3}.png`
+
+有，用這裡的 **自訂** 最有用。
+
+你現在是在資料標籤的數字格式設定。請選：
+
+```text
+自訂
+```
+
+然後在「格式代碼」輸入下面其中一種。
+
+**DieYield 建議**
+
+顯示 5 位小數：
+
+```text
+0.00000%
+```
+
+顯示 4 位小數：
+
+```text
+0.0000%
+```
+
+加上 DY 字樣：
+
+```text
+"DY "0.00000%
+```
+
+顯示效果：
+
+```text
+DY 99.99850%
+```
+
+**PanelYield 建議**
+
+顯示 2 位小數：
+
+```text
+0.00%
+```
+
+加上 PY 字樣：
+
+```text
+"PY "0.00%
+```
+
+顯示效果：
+
+```text
+PY 86.21%
+```
+
+**比較適合你圖表的組合**
+
+- `PanelYield` 標籤：
+
+```text
+0.00%
+```
+
+- `DieYield` 標籤：
+
+```text
+0.00000%
+```
+
+或：
+
+```text
+"DY "0.00000%
+```
+
+記得改完格式代碼後按：
+
+```text
+新增
+```
+
+這樣 Excel 才會套用。
+
+> 99.99xx 想要變成 99.xx 或xxx , 用改單位或是甚麼
+
+可以，但在 Excel 圖表「內建數字格式」裡，**不能直接把 `99.9985%` 重新計算成 `99.85` 或 `15 ppm`**。
+數字格式只能改「顯示小數、加文字、千分位」，不能做 `1 - 值` 這種計算。
+
+你想要的兩種效果要分開看：
+
+**1. 顯示成 99.xx**
+
+如果原值是：
+
+```text
+99.9985%
+```
+
+用數字格式只能顯示成：
+
+```text
+100.00%
+99.9985%
+99.999%
+```
+
+不能直接變成你想看的：
+
+```text
+99.85
+```
+
+因為這已經不是格式，是重新換算。
+
+**2. 顯示成 xxx，例如 ppm**
+
+這個最有意義，但也需要計算：
+
+```text
+Die Loss ppm = (1 - DieYield) * 1000000
+```
+
+例如：
+
+```text
+99.9985% -> 15 ppm
+99.9991% -> 9 ppm
+```
+
+這無法靠「單位」或「自訂格式」完成，因為 Excel 的自訂格式不會改變數值本身。
+
+**內建圖表設定能做到的極限**
+
+你可以在自訂格式輸入：
+
+```text
+0.00000%
+```
+
+或：
+
+```text
+"DY "0.00000%
+```
+
+但不能輸入類似：
+
+```text
+(1-0.00000%)*1000000
+```
+
+Excel 不支援這樣的格式計算。
+
+**如果完全不想改 VBA**
+
+可以只在 Excel 裡加輔助欄，然後資料標籤選「儲存格中的值」。
+
+例如旁邊新增一欄：
+
+```excel
+=(1-L2)*1000000
+```
+
+格式：
+
+```excel
+0 "ppm"
+```
+
+然後圖表：
+
+- 線條仍然用原本的 `DieYield`
+- 資料標籤改用這欄 `ppm`
+
+這樣圖的 Y 軸仍跟 `PanelYield` 同一軸，但標籤顯示成：
+
+```text
+15 ppm
+```
+
+如果要你說的 `99.xx`，也可以用輔助欄公式，例如：
+
+```excel
+=(1-L2)*1000000
+```
+
+或：
+
+```excel
+=(L2-0.9999)*1000000
+```
+
+但「用單位或內建格式」做不到換算。需要輔助欄或 VBA。
+
+> vba怎麼做
+
+<details><summary>2 previous messages</summary>
+
+> 可以，用 VBA 最穩的做法不是改 `DieYield` 本身，而是另外產生「DieYield 資料標籤用」的頁籤。圖表線條仍吃原本 `DieYield`，但資料標籤改吃 VBA 產生的 `ppm` 文字。這樣不會影響同軸圖，也不會破壞你現有 ChartData 欄位位置。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+73 -0)
+>
+> </details>
+</details>
+
+已幫你用 VBA 加好了。新版會自動產生三張 DieYield 標籤頁：
+
+- `DieLabel_Day`
+- `DieLabel_Week`
+- `DieLabel_Month`
+
+檔案：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+邏輯是：
+
+```vb
+Die Loss ppm = (1 - DieYield) * 1000000
+```
+
+例如：
+
+```text
+99.9985% -> 15 ppm
+99.9991% -> 9 ppm
+```
+
+使用方式：
+
+1. 重新匯入新版 `.bas`
+2. 執行：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+3. 到圖表點選 `DieYield` 資料標籤
+4. 右鍵 → `設定資料標籤格式`
+5. 勾選 `儲存格中的值`
+6. 選對應的 `DieLabel_Day / Week / Month` 欄位
+7. 取消勾選原本的 `值`
+
+這樣圖表仍然用原本 `DieYield` 跟 `PanelYield` 同一軸，但標籤會顯示成 `15 ppm` 這種更明顯的文字。
+
+> 改回來吧, 不是我要
+
+<details><summary>2 previous messages</summary>
+
+> 收到，我把剛剛新增的 `DieLabel_Day/Week/Month` 產生邏輯復原，回到只產生原本的 `ChartData_Day/Week/Month`。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+0 -73)
+>
+> </details>
+</details>
+
+已改回來，剛剛新增的 `DieLabel_Day / Week / Month` 和 ppm 標籤邏輯已移除。
+
+目前 VBA 回到只產生：
+
+- `RawData`
+- `PivotData`
+- `ChartData_Day`
+- `ChartData_Week`
+- `ChartData_Month`
+- `OPNO_List`
+
+檔案已更新：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+> 新增OP A5FNT001 安插到 排列中間導致圖表選取範圍錯誤。能否不要自行安插到圖表中間
+>
+> User context
+>
+> Attachments:
+> - DailyYieldUpdate.xlsm: `./outputs/DailyYieldUpdate.xlsm`
+
+<details><summary>4 previous messages</summary>
+
+> 對，原因在目前 `GetMasterOpnoList` 會把 OPNO 重新排序，所以新出現的 `A5FNT001` 會被插到中間，導致後面欄位全部位移，圖表範圍就錯了。我會改成「既有 OPNO_List 順序不動，新 OPNO 永遠追加到最後」。
+>
+> MCP tool call
+>
+> node_repl.js
+>
+> ```json
+> {
+>   "title": "Inspect OPNO list function",
+>   "code": "{\n const fs=await import('node:fs');\n const file='C:/Users/0904211/Documents/Codex/2026-06-11/excel/outputs/DailyYieldUpdater_ASCII.bas';\n const text=fs.readFileSync(file,'utf8');\n const start=text.indexOf('Private Function GetMasterOpnoList');\n const end=text.indexOf('Private Sub CreateOrResizeChartDataTable');\n nodeRepl.write(text.slice(start,end));\n}",
+>   "timeout_ms": 30000
+> }
+> ```
+>
+> ```text
+> Private Function GetMasterOpnoList(ByVal wb As Workbook, ByVal currentOpnoDict As Object) As Variant
+>     Dim listWs As Worksheet
+>     Dim masterDict As Object
+>     Dim lastRow As Long
+>     Dim r As Long
+>     Dim opno As String
+>     Dim keys As Variant
+>
+>     Set listWs = EnsureSheet(wb, "OPNO_List")
+>     Set masterDict = CreateObject("Scripting.Dictionary")
+>
+>     If Len(Trim$(CStr(listWs.Range("A1").Value))) = 0 Then
+>         listWs.Range("A1").Value = "OPNO"
+>         listWs.Range("A1").Font.Bold = True
+>         listWs.Range("A1").Interior.Color = RGB(217, 234, 247)
+>     End If
+>
+>     lastRow = listWs.Cells(listWs.Rows.Count, "A").End(xlUp).Row
+>     For r = 2 To lastRow
+>         opno = Trim$(CStr(listWs.Cells(r, 1).Value))
+>         If Len(opno) > 0 Then masterDict(opno) = opno
+>     Next r
+>
+>     keys = currentOpnoDict.Keys
+>     For r = LBound(keys) To UBound(keys)
+>         opno = Trim$(CStr(keys(r)))
+>         If Len(opno) > 0 Then
+>             If Not masterDict.Exists(opno) Then
+>                 masterDict(opno) = opno
+>                 listWs.Cells(listWs.Cells(listWs.Rows.Count, "A").End(xlUp).Row + 1, 1).Value = opno
+>             End If
+>         End If
+>     Next r
+>
+>     keys = masterDict.Keys
+>     SortKeysSimple keys
+>     listWs.Columns.AutoFit
+>     GetMasterOpnoList = keys
+> End Function
+> ```
+>
+> 我確認到了排序點：最後呼叫了 `SortKeysSimple keys`。把這行拿掉後，OPNO 欄位順序就會完全依 `OPNO_List`，新 OPNO 只追加不插入。
+>
+> <details><summary>Edited 1 file</summary>
+>
+> - Wrote `./outputs/DailyYieldUpdater_ASCII.bas` (+0 -1)
+>
+> </details>
+</details>
+
+已修正 VBA 原始檔：
+
+[DailyYieldUpdater_ASCII.bas](./outputs/DailyYieldUpdater_ASCII.bas)
+
+原因是原本程式會把 `OPNO_List` 重新排序，所以新 OPNO 例如 `A5FNT001` 會被插到中間，造成 `ChartData` 欄位整個往後位移，圖表範圍就錯。
+
+我已改成：
+
+- 既有 `OPNO_List` 順序不動
+- 新出現的 OPNO 只追加到清單最後
+- 不再自動排序 OPNO
+
+你需要做兩件事：
+
+1. 重新匯入新版 `.bas` 到 `DailyYieldUpdate.xlsm`
+2. 如果 `A5FNT001` 目前已經在 `OPNO_List` 中間，請手動把它移到最後一次
+
+之後再跑：
+
+```vb
+UpdateOPNOYieldDataOnly
+```
+
+後續新增 OPNO 就不會再插到中間了。
