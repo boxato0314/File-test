@@ -1,0 +1,325 @@
+station_image_collector.py 程式架構與 Done Record 檢查邏輯彙整
+================================================================
+
+一、程式目的
+----------------------------------------------------------------
+station_image_collector.py 是各站點的影像搜尋與集中複製程式。
+
+主要功能：
+1. 從中央 query_list.xlsx 讀取待處理的 Lot／Unit 查詢。
+2. 依 station_config.json 指定的來源路徑、影像群組與匹配規則搜尋影像。
+3. 將找到的影像安全複製到集中輸出資料夾。
+4. 使用 Done Record、輸出檔案預檢與檔案指紋避免重複複製。
+5. 寫入 Log、Status、Heartbeat 與 Lock File。
+6. 支援單次執行 once 與常駐執行 loop。
+
+整體流程：
+main()
+  ↓
+load_config()
+  ↓
+取得單一執行個體 Lock
+  ↓
+判斷 run_mode
+  ├─ once：執行一次 run_once() 後結束
+  └─ loop：run_once() → 等待與 Heartbeat → 重複
+
+二、主要程式區塊
+----------------------------------------------------------------
+1. 程式環境與常數
+2. Config 載入與執行路徑
+3. 單一執行個體鎖定
+4. Status 與 Heartbeat
+5. Log、Done Record 輪替與 .part 清理
+6. Query Excel 讀取
+7. 影像匹配規則
+8. 來源資料夾搜尋與快取
+9. 輸出命名、去重與安全複製
+10. run_once() 與 main() 主控制流程
+
+三、執行目錄與 Config
+----------------------------------------------------------------
+程式使用 app_dir() 判斷執行目錄。
+
+直接執行 Python 時：
+- 使用 station_image_collector.py 所在資料夾。
+
+打包成 EXE 時：
+- 使用 EXE 所在資料夾。
+
+Config 載入順序：
+1. station_config.json
+2. config.json
+
+正式部署時，station_config.json 應與 EXE 放在同一層：
+
+StationImageCollector_SPI2/
+├─ StationImageCollector_SPI2.exe
+├─ station_config.json
+└─ _internal/
+
+四、Query File 處理方式
+----------------------------------------------------------------
+程式會讀取 query_list.xlsx 的指定工作表。
+
+主要欄位包括：
+- Request_ID
+- Lot_No
+- Unit_No
+- Panel_ID
+- X
+- Y
+- Defect_Found_Station
+- Defect_Code
+- Status
+- Owner
+- Remark
+
+只會處理下列 Status：
+- 空白
+- Open
+- New
+- 待查
+- 查詢
+
+Closed、Done、Completed 等狀態不會處理。
+主程式只讀取 Query Excel，不會直接把 Status 回寫成 Done。
+
+五、影像 Group 與 Variant
+----------------------------------------------------------------
+影像搜尋採 Group／Variant 架構。
+
+Group：代表影像種類，例如 Component_Image、Overview、NG_Image。
+Variant：代表同一種類中的方向、Channel、機台或版本，例如 TOP、BOTTOM、SIDE。
+
+每個 Variant 可以設定：
+- roots
+- extensions
+- folder_match
+- file_match
+- match
+- path_include
+- path_exclude
+- filename_include
+- filename_exclude
+- max_matches
+- max_search_depth
+- dedupe_scope
+- required_query_keys
+
+六、影像匹配規則
+----------------------------------------------------------------
+程式支援以下規則：
+1. any：永遠符合。
+2. contains：指定的所有查詢值都必須存在於比對文字中。
+3. token_contains：將文字切成 Token 後精確比對，可避免 05 錯誤匹配到 005。
+4. exact：完整文字必須完全相同。
+5. exact_stem：不含副檔名的檔名必須完全相同。
+6. prefix_before_underscore：比較第一個底線前的內容。
+7. stem_equals_key_plus_suffix：檔名 Stem 必須等於查詢值加固定後綴。
+8. fixed_name：只接受 Config 指定的固定檔名。
+9. regex：使用正規表示式進行複雜匹配。
+
+七、來源資料夾搜尋
+----------------------------------------------------------------
+模式一：一般遞迴搜尋
+- 使用 os.walk() 逐層掃描。
+- 檢查搜尋深度、副檔名、Include／Exclude 與 Match Rule。
+
+模式二：Folder Cache 優化搜尋
+- 當 Config 同時設定 folder_match 與 file_match 時使用。
+- 先依 Lot 找候選資料夾。
+- 再只在候選資料夾內依 Unit 找影像。
+- 建立資料夾檔案清單與檔名前綴索引。
+- 同一輪中避免重複掃描相同資料夾。
+
+八、搜尋快取
+----------------------------------------------------------------
+每次 run_once() 都建立新的 scan_cache：
+- candidate_folders：快取某個 Lot 對應的候選資料夾。
+- folder_files：快取資料夾內符合副檔名的檔案清單。
+- folder_file_index：建立 Prefix 與 Stem 索引，加速 Unit 查詢。
+
+快取只在本次 run_once() 有效，下一輪重新建立。
+
+九、輸出已存在預檢
+----------------------------------------------------------------
+若設定 skip_source_search_if_output_exists = true，程式會先檢查集中輸出資料夾是否已有符合下列識別資訊的檔案：
+- Lot_No
+- Unit_No
+- Station
+- Group_Type
+- Variant
+
+若已存在，記錄 OUTPUT_EXISTS_SKIP，並跳過來源資料夾搜尋。
+
+十、Done Record 的實際檢查方式
+----------------------------------------------------------------
+重要結論：
+
+程式會先把整份 Done Record 全部讀入記憶體，
+但實際比對時，只檢查目前 Query File 中正在處理的查詢所產生的 Done Key。
+
+執行流程：
+1. 讀取 Query File。
+2. 讀取完整 Done Record。
+3. 將 Done Record 全部載入 Dictionary。
+4. 只處理 Query File 中 Open／New 等有效查詢。
+5. 找到來源影像後建立 Done Key。
+6. 用 Done Key 到 Dictionary 中做精確查詢。
+
+概念流程：
+完整 Done Record
+  ↓
+一次全部載入 Dictionary
+
+Query File 中 Open／New 的資料
+  ↓
+搜尋來源影像
+  ↓
+建立 Done Key
+  ↓
+查詢 Dictionary 是否已有相同 Key
+
+十一、Done Key 組成
+----------------------------------------------------------------
+Done Key 通常包含：
+- Lot_No
+- Unit_No
+- Station
+- Group_Type
+- Variant
+- Source_Bucket
+- File_Fingerprint
+
+若 dedupe_scope 設為 unit，識別會包含 Unit_No。
+若 dedupe_scope 設為 lot，識別可不包含 Unit_No，適合 Lot Overview 或批次共用影像。
+
+十二、Done Record 效能特性
+----------------------------------------------------------------
+假設 Query File 只有 5 筆 Open Query，但 Done Record 有 300 萬筆，程式仍會：
+1. 先讀取完整 300 萬筆 Done Record。
+2. 將其載入記憶體 Dictionary。
+3. 後續只比對那 5 筆 Query 找到的影像所建立的 Done Key。
+
+因此：
+- Dictionary 單筆查詢速度很快。
+- 真正可能影響效能的是每輪完整讀取 Done Record。
+- Done Record 越大，run_once() 啟動越慢。
+- Done Record 越大，記憶體使用越高。
+
+十三、Done Record 目前需要注意的問題
+----------------------------------------------------------------
+目前程式在成功複製後會把 Done Key 寫入 Done Record 檔案。
+若只寫檔案，沒有同步更新本輪記憶體中的 done Dictionary，可能發生同一輪重複處理。
+
+建議在成功寫入 Done Record 後，同時增加：
+
+done[done_key] = str(target)
+
+概念程式：
+save_done_record(config["done_file"], done_key, str(target))
+done[done_key] = str(target)
+
+十四、Done Record 與輸出檔案的關係
+----------------------------------------------------------------
+程式不是只看到 Done Key 存在就直接跳過，通常還會確認 Done Record 所記錄的輸出檔案是否仍存在。
+
+若 Done Key 存在，但輸出檔案已被刪除，程式可以重新複製該影像。
+
+十五、檔案指紋
+----------------------------------------------------------------
+File Fingerprint 通常由以下資訊組成後產生 MD5：
+- 完整來源路徑
+- 檔案大小
+- 最後修改時間
+
+優點：不必讀完整影像內容，大量影像環境下速度較快。
+限制：來源路徑改變後會被視為不同檔案。
+
+十六、安全複製
+----------------------------------------------------------------
+程式使用 .part 暫存檔：
+
+來源影像
+  ↓
+複製成 xxx.jpg.part
+  ↓
+複製完成後 Rename
+  ↓
+xxx.jpg
+
+這可避免中央端或報表程式讀到尚未完成的影像。
+
+十七、Log、Status 與 Lock
+----------------------------------------------------------------
+Log：
+- 使用 CSV 追加寫入。
+- 記錄 Found、Not Found、Skip、Error、來源路徑與輸出路徑。
+
+Status：
+- 使用覆寫方式保存目前狀態。
+- 包含站別、模式、Heartbeat、統計結果。
+
+Lock：
+- 防止同一站 Collector 重複啟動。
+- 可用 lock_stale_minutes 判斷是否為異常中止後留下的舊 Lock。
+
+十八、run_once() 主要流程
+----------------------------------------------------------------
+1. 執行 Log、Done Record 與 .part 維護。
+2. 讀取 Query Excel。
+3. 載入完整 Done Record。
+4. 建立本輪搜尋快取。
+5. 逐筆檢查 Open／New Query。
+6. 逐 Image Group。
+7. 逐 Variant。
+8. 檢查必要查詢欄位。
+9. 檢查輸出檔案是否已存在。
+10. 檢查本輪來源搜尋數量限制。
+11. 檢查來源 Root 是否存在。
+12. 搜尋符合影像。
+13. 建立 Done Key。
+14. 檢查 Done Record。
+15. 安全複製影像。
+16. 寫入 Done Record。
+17. 寫入 Log 與 Status。
+
+十九、once 與 loop 模式
+----------------------------------------------------------------
+once：執行一次 run_once() 後結束。
+適合 Windows Task Scheduler、手動測試與 Config 驗證。
+
+loop：執行 run_once() 後依 scan_interval_sec 等待，期間持續寫 Heartbeat，再進行下一輪。
+適合機台常駐與持續監控 Query File。
+
+二十、大量影像環境建議
+----------------------------------------------------------------
+1. 優先使用 folder_match + file_match。
+2. 先用 Lot 定位候選資料夾，再用 Unit 索引檔名。
+3. 設定合理的 max_search_depth。
+4. 使用 path_include／path_exclude 排除 Backup、Temp、Archive。
+5. 啟用 skip_source_search_if_output_exists。
+6. 輸出檔名應包含 Lot、Unit、Station、Group、Variant。
+7. Done Record 不宜設定過小的輪替容量。
+8. 長期建議將文字 Done Record 改為 SQLite。
+9. SQLite 可依本次 Done Key 直接查詢，不必每輪載入完整歷史紀錄。
+10. 來源路徑建議使用 UNC，不要依賴 Windows 映射磁碟代號。
+
+二十一、最終結論
+----------------------------------------------------------------
+station_image_collector.py 是一個 Config 驅動的站點影像搜尋代理程式。
+
+核心流程：
+讀取 Query
+→ 依 Lot／Unit 找影像
+→ 套用 Group／Variant 與匹配規則
+→ 檢查輸出與 Done Record
+→ 使用 .part 安全複製
+→ 寫入 Log、Status 與完成紀錄
+→ 常駐等待下一輪
+
+Done Record 的檢查方式不是只讀 Query 對應的部分檔案，而是：
+先完整載入整份 Done Record，再只針對目前 Query File 中有效查詢產生的 Done Key 進行精確查詢。
+
+因此目前效能瓶頸可能是「每輪完整讀取 Done Record」，而不是 Dictionary 的單筆比對速度。
